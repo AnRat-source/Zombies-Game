@@ -2200,12 +2200,12 @@ function heatmapStamp(kind='zombie'){if(heatState.stamps[kind])return heatState.
 function hordeGlowScale(){return clamp(.72/Math.sqrt(Math.max(.05,cam.zoom)),.42,1.5)}
 // Horde density is strategic information at city scale, then gracefully gets
 // out of the way as individual infected become readable at street scale.
-function hordeGlowOpacity(){return clamp((1.22-cam.zoom)/.82,0,1)}
+function hordeGlowOpacity(){const fade=clamp((.72-cam.zoom)/.34,0,1);return fade*fade}
 function zombieHeatCellSize(){return cam.zoom>.52?24:cam.zoom>.24?32:44}
 function civilianHeatCellSize(){return cam.zoom>.52?42:cam.zoom>.24?50:58}
 function paintHordeTexture(){
  const surface=ensureHeatCanvas(),c=heatState.ctx;c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,surface.width,surface.height);
- const scale=Math.sqrt(surface.width*surface.height/(W*H)),paint=(cells,kind,base,spread,alpha)=>{if(!cells.length)return;const stamp=heatmapStamp(kind);c.save();c.globalCompositeOperation=kind==='zombie'?'source-over':'lighter';
+ const scale=Math.sqrt(surface.width*surface.height/(W*H)),paint=(cells,kind,base,spread,alpha)=>{if(!cells.length||alpha<=.002)return;const stamp=heatmapStamp(kind);c.save();c.globalCompositeOperation=kind==='zombie'?'source-over':'lighter';
   for(const b of cells){const radius=Math.max(3.5,clamp(base+Math.sqrt(b.count)*spread,base,kind==='civilian'?220:260)*scale*heatState.glowScale),x=b.x/W*surface.width,y=b.y/H*surface.height;c.globalAlpha=alpha*Math.min(1,.62+Math.log2(b.count+1)*.10);c.drawImage(stamp,x-radius,y-radius,radius*2,radius*2)}c.restore()};
  // Red horde stamps are source-over and drawn last, so infection always wins
  // visual priority over a civilian crowd occupying the same area.
