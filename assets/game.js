@@ -2194,13 +2194,13 @@ function ensureHeatCanvas(){
 function heatmapStamp(kind='zombie'){if(heatState.stamps[kind])return heatState.stamps[kind];const stamp=document.createElement('canvas');stamp.width=128;stamp.height=128;
  const c=stamp.getContext('2d'),g=c.createRadialGradient(64,64,0,64,64,64);
  if(kind==='civilian'){g.addColorStop(0,'rgba(55,183,177,.44)');g.addColorStop(.20,'rgba(38,151,164,.30)');g.addColorStop(.50,'rgba(31,111,151,.14)');g.addColorStop(.78,'rgba(22,78,134,.04)');g.addColorStop(1,'rgba(10,70,130,0)')}
- else{g.addColorStop(0,'rgba(255,67,72,.98)');g.addColorStop(.18,'rgba(244,49,61,.78)');g.addColorStop(.48,'rgba(213,32,47,.42)');g.addColorStop(.76,'rgba(164,15,32,.13)');g.addColorStop(1,'rgba(128,0,20,0)')}
+ else{g.addColorStop(0,'rgba(218,43,49,.68)');g.addColorStop(.18,'rgba(202,34,44,.52)');g.addColorStop(.48,'rgba(174,25,39,.27)');g.addColorStop(.76,'rgba(134,13,29,.08)');g.addColorStop(1,'rgba(110,0,20,0)')}
  c.fillStyle=g;c.fillRect(0,0,128,128);heatState.stamps[kind]=stamp;return stamp;
 }
 function hordeGlowScale(){return clamp(.72/Math.sqrt(Math.max(.05,cam.zoom)),.42,1.5)}
 // Horde density is strategic information at city scale, then gracefully gets
 // out of the way as individual infected become readable at street scale.
-function hordeGlowOpacity(){return clamp((.94-cam.zoom)/.48,0,1)}
+function hordeGlowOpacity(){return clamp((1.22-cam.zoom)/.82,0,1)}
 function zombieHeatCellSize(){return cam.zoom>.52?24:cam.zoom>.24?32:44}
 function civilianHeatCellSize(){return cam.zoom>.52?42:cam.zoom>.24?50:58}
 function paintHordeTexture(){
@@ -2209,7 +2209,7 @@ function paintHordeTexture(){
   for(const b of cells){const radius=Math.max(3.5,clamp(base+Math.sqrt(b.count)*spread,base,kind==='civilian'?220:260)*scale*heatState.glowScale),x=b.x/W*surface.width,y=b.y/H*surface.height;c.globalAlpha=alpha*Math.min(1,.62+Math.log2(b.count+1)*.10);c.drawImage(stamp,x-radius,y-radius,radius*2,radius*2)}c.restore()};
  // Red horde stamps are source-over and drawn last, so infection always wins
  // visual priority over a civilian crowd occupying the same area.
- paint(heatState.civilianCells,'civilian',54,10,.16);paint(heatState.cells,'zombie',62,13,.92*heatState.hordeOpacity);
+ paint(heatState.civilianCells,'civilian',54,10,.16);paint(heatState.cells,'zombie',62,13,.52*heatState.hordeOpacity);
  heatState.dirty=true;
 }
 function updateZombieHeatmap(now=performance.now()){
