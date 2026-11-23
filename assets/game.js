@@ -1776,7 +1776,7 @@ class CityRenderer{
    gl_Position=vec4(rx*uZoom*2.0/uResolution.x,-(ry*st-z*ct)*uZoom*2.0/uResolution.y,-(ry*ct+z*st)/uDepthRange,1.0);vUv=aUv;}`;
   const heatFs=`#version 300 es
   precision mediump float;uniform sampler2D uHeat;in vec2 vUv;out vec4 fragColor;
-  void main(){vec4 heat=texture(uHeat,vUv);float a=max(heat.a,max(heat.r,max(heat.g,heat.b)));if(a<.006)discard;float bright=max(heat.r,max(heat.g,heat.b));vec3 tint=heat.rgb/max(.003,bright);vec3 glow=min(vec3(1.0),tint*(.34+bright*1.25));fragColor=vec4(glow,min(.94,a*.92));}`;
+  void main(){vec4 heat=texture(uHeat,vUv);float a=heat.a;if(a<.006)discard;float bright=max(heat.r,max(heat.g,heat.b));vec3 tint=heat.rgb/max(.003,bright);vec3 glow=min(vec3(1.0),tint*(.34+bright*1.25));fragColor=vec4(glow,min(.94,a*.92));}`;
   const hp=gl.createProgram();for(const [src,type] of [[heatVs,gl.VERTEX_SHADER],[heatFs,gl.FRAGMENT_SHADER]]){
    const shader=gl.createShader(type);gl.shaderSource(shader,src);gl.compileShader(shader);
    if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(shader));gl.attachShader(hp,shader);gl.deleteShader(shader)
@@ -2202,7 +2202,7 @@ function heatmapStamp(kind='zombie'){if(heatState.stamps[kind])return heatState.
 function hordeGlowScale(){return clamp(.72/Math.sqrt(Math.max(.05,cam.zoom)),.42,1.5)}
 // Horde density is strategic information at city scale, then gracefully gets
 // out of the way as individual infected become readable at street scale.
-function hordeGlowOpacity(){const fade=clamp((.72-cam.zoom)/.34,0,1);return fade*fade}
+function hordeGlowOpacity(){const fade=clamp((.56-cam.zoom)/.20,0,1);return fade*fade}
 function zombieHeatCellSize(){return cam.zoom>.52?24:cam.zoom>.24?32:44}
 function civilianHeatCellSize(){return cam.zoom>.52?42:cam.zoom>.24?50:58}
 function paintHordeTexture(){
@@ -2211,7 +2211,7 @@ function paintHordeTexture(){
   for(const b of cells){const radius=Math.max(3.5,clamp(base+Math.sqrt(b.count)*spread,base,kind==='civilian'?220:260)*scale*heatState.glowScale),x=b.x/W*surface.width,y=b.y/H*surface.height;c.globalAlpha=alpha*Math.min(1,.62+Math.log2(b.count+1)*.10);c.drawImage(stamp,x-radius,y-radius,radius*2,radius*2)}c.restore()};
  // Red horde stamps are source-over and drawn last, so infection always wins
  // visual priority over a civilian crowd occupying the same area.
- paint(heatState.civilianCells,'civilian',54,10,.16);paint(heatState.cells,'zombie',62,13,.52*heatState.hordeOpacity);
+ paint(heatState.civilianCells,'civilian',54,10,.16);paint(heatState.cells,'zombie',50,10,.52*heatState.hordeOpacity);
  heatState.dirty=true;
 }
 function updateZombieHeatmap(now=performance.now()){
