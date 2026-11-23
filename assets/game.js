@@ -113,6 +113,36 @@ const NYC_PLACES=[
  ['DOWNTOWN BROOKLYN',-73.988,40.690],['CONEY ISLAND',-73.975,40.578],['LONG ISLAND CITY',-73.944,40.747],
  ['FLUSHING',-73.828,40.761],['THE BRONX',-73.873,40.849],['STATEN ISLAND',-74.151,40.595]
 ].map(([name,lon,lat])=>({name,lon,lat}));
+// Concentrate the procedural 3D skyline at real NYC high-rise districts. The
+// official ground map below supplies the actual streets and footprint imagery.
+const NYC_SKYLINE_HUBS=[
+ [-74.013,40.713,38,190],[-73.987,40.754,32,260],[-73.982,40.765,34,210],[-74.002,40.754,24,190],
+ [-73.985,40.693,19,170],[-73.946,40.744,18,170],[-73.977,40.756,18,145]
+];
+function nycSkylineLevels(x,y,random=.5){
+ let levels=1+Math.floor(random*6);if(!isNYC())return levels;
+ for(const [lon,lat,peak,radius] of NYC_SKYLINE_HUBS){const p=nycProject(lon,lat),r=radius*nycScale(),d=Math.hypot(x-p.x,y-p.y);if(d>=r)continue;levels=Math.max(levels,Math.round(peak*Math.pow(1-d/r,2.2)+random*3));}
+ return Math.max(1,levels);
+}
+// The official NYC basemap is image-tiled and loaded only for the current NYC
+// campaign. Its CC-BY source is documented in README; offline play falls back
+// to the existing procedural map without delaying a stage.
+const NYC_TILE_ZOOM=11,NYC_TILE_URL='https://maps.nyc.gov/xyz/1.0.0/carto/basemap/{z}/{x}/{y}.jpg';
+const nycReferenceMap={canvas:null,ready:false,loading:false,dirty:false,generation:0};
+const nycTileX=(lon,z)=>Math.floor((lon+180)/360*(1<<z));
+const nycTileY=(lat,z)=>Math.floor((1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*(1<<z));
+const nycTileLon=(x,z)=>x/(1<<z)*360-180;
+const nycTileLat=(y,z)=>Math.atan(Math.sinh(Math.PI*(1-2*y/(1<<z))))*180/Math.PI;
+function loadNYCTile(url){return new Promise((resolve,reject)=>{const image=new Image();image.crossOrigin='anonymous';image.decoding='async';image.onload=()=>resolve(image);image.onerror=()=>reject(Error('NYC basemap tile unavailable'));image.src=url})}
+function loadNYCReferenceMap(){
+ if(activeMap!=='nyc')return;const generation=simId;if(nycReferenceMap.loading&&nycReferenceMap.generation===generation)return;nycReferenceMap.loading=true;nycReferenceMap.ready=false;nycReferenceMap.generation=generation;const z=NYC_TILE_ZOOM;
+ const minX=nycTileX(NYC_BOUNDS.west,z),maxX=nycTileX(NYC_BOUNDS.east,z),minY=nycTileY(NYC_BOUNDS.north,z),maxY=nycTileY(NYC_BOUNDS.south,z),surface=document.createElement('canvas');surface.width=1024;surface.height=1024;const c=surface.getContext('2d');
+ const jobs=[];for(let ty=minY;ty<=maxY;ty++)for(let tx=minX;tx<=maxX;tx++){const url=NYC_TILE_URL.replace('{z}',z).replace('{x}',tx).replace('{y}',ty);jobs.push(loadNYCTile(url).then(image=>({image,tx,ty})))}
+ Promise.all(jobs).then(tiles=>{if(generation!==simId||activeMap!=='nyc')return;
+  for(const {image,tx,ty} of tiles){const a=nycProject(nycTileLon(tx,z),nycTileLat(ty,z)),b=nycProject(nycTileLon(tx+1,z),nycTileLat(ty+1,z));c.drawImage(image,a.x/W*surface.width,a.y/H*surface.height,(b.x-a.x)/W*surface.width,(b.y-a.y)/H*surface.height)}
+  nycReferenceMap.canvas=surface;nycReferenceMap.ready=true;nycReferenceMap.dirty=true;nycReferenceMap.generation=generation;if(window.CityfallPolygonMesh&&world3D?.ready)world3D.needsBuild=true;
+ }).catch(()=>{if(generation===simId)nycReferenceMap.canvas=null}).finally(()=>{if(generation===nycReferenceMap.generation)nycReferenceMap.loading=false});
+}
 const NYC_PARKS=[[-73.967,40.784,195],[-73.972,40.776,140],[-73.969,40.661,130],[-73.852,40.747,125],[-73.875,40.860,125]];
 const NYC_CROSSINGS=[
  ['Brooklyn Bridge',-73.997,40.709,-73.989,40.703,'Brooklyn'],
@@ -196,7 +226,7 @@ function* buildManhattanBlocksSteps(seed){
     if(!corners.every(([qx,qy])=>{const x=loc.x+qx*co-qy*si,y=loc.y+qx*si+qy*co;return withinManhattan(x,y)&&!manhattanPark(x,y)}))continue;
     const bw=Math.abs(w*co)+Math.abs(h*si),bh=Math.abs(w*si)+Math.abs(h*co);
     buildings.push({key:'MH:'+si0+':'+ti0+':'+i,x:loc.x-bw*.5,y:loc.y-bh*.5,w:bw,h:bh,cx:loc.x,cy:loc.y,footW:w,footH:h,angle,
-      locked:!nycDistrictUnlocked(loc.x,loc.y,'Manhattan'),roof:Math.floor(rand()*7),shade:rand(),height:1+Math.floor(rand()*8),vent:rand()<.45,solar:rand()<.14});
+      locked:!nycDistrictUnlocked(loc.x,loc.y,'Manhattan'),roof:Math.floor(rand()*7),shade:rand(),height:nycSkylineLevels(loc.x,loc.y,rand()),vent:rand()<.45,solar:rand()<.14});
    }
   }
  }
@@ -416,7 +446,8 @@ function* makeCitySteps(){const config=MAPS[activeMap],rand=rng(config.seed);bui
     if(w<12||h<12)continue;
     if(isNYC()&&![ [x+3,y+3],[x+w-3,y+3],[x+3,y+h-3],[x+w-3,y+h-3],[x+w/2,y+h/2] ].every(p=>activeMap==='nyc'?!!nycPreviewBoroughAt(p[0],p[1]):nycLandAt(p[0],p[1])))continue;
     if(localRand()<.25){w*=.76;h*=.87}
-    buildings.push({key:ix+':'+iy+':'+i+':'+j,x,y,w,h,locked,roof:Math.floor(localRand()*7),shade:localRand(),height:1+Math.floor(localRand()*(activeMap==='inland'?7:(isNYC()||activeMap==='nyc_legacy')?6:activeMap==='harbour'?3:4)),vent:localRand()<.52,solar:localRand()<.19});
+    const height=isNYC()?nycSkylineLevels(x+w*.5,y+h*.5,localRand()):1+Math.floor(localRand()*(activeMap==='inland'?7:activeMap==='harbour'?3:4));
+    buildings.push({key:ix+':'+iy+':'+i+':'+j,x,y,w,h,locked,roof:Math.floor(localRand()*7),shade:localRand(),height,vent:localRand()<.52,solar:localRand()<.19});
   }
  }
  // Preview future districts in gray on every procedural map, while leaving
@@ -575,6 +606,7 @@ function* makeCitySteps(){const config=MAPS[activeMap],rand=rng(config.seed);bui
  }
  rebuildBuildingGrid()
  if(world3D.ready)world3D.needsBuild=true;
+ if(activeMap==='nyc')loadNYCReferenceMap();
 }
 
 function waterAt(x,y,pad=0){if(isNYC()){
@@ -1614,7 +1646,7 @@ class CityRenderer{
  constructor(){
   this.canvas=document.createElement('canvas');this.canvas.id='world3d';canvas.parentElement.insertBefore(this.canvas,canvas);
   this.gl=this.canvas.getContext('webgl2',{alpha:false,antialias:true,preserveDrawingBuffer:false,depth:true,powerPreference:'high-performance'});
-  this.ready=false;this.staticData=null;this.staticCount=0;this.needsBuild=true;this.palette=new Map();this.dynamic=[];this.lodData=null;this.lodCount=0;this.softwareChunks=null;this.polyData=new Float32Array();this.polyCount=0;
+  this.ready=false;this.staticData=null;this.staticCount=0;this.needsBuild=true;this.palette=new Map();this.dynamic=[];this.lodData=null;this.lodCount=0;this.softwareChunks=null;this.polyData=new Float32Array();this.polyCount=0;this.heatWorldW=0;this.heatWorldH=0;
   if(!this.gl){this.ctx2=this.canvas.getContext('2d');this.software=true;this.ready=true;return;}
   try{this.setup();this.ready=true}catch(e){console.error('WebGL3D setup failed; using projected 3D fallback',e);this.canvas.remove();this.canvas=document.createElement('canvas');this.canvas.id='world3d';canvas.parentElement.insertBefore(this.canvas,canvas);this.gl=null;this.ctx2=this.canvas.getContext('2d');this.software=true;this.ready=true;this.needsBuild=true}
  }
@@ -1666,7 +1698,7 @@ class CityRenderer{
   this.vao=gl.createVertexArray();gl.bindVertexArray(this.vao);
   const cube=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,cube);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(verts),gl.STATIC_DRAW);
   for(let i=0;i<2;i++){gl.enableVertexAttribArray(i);gl.vertexAttribPointer(i,3,gl.FLOAT,false,24,i*12)}
-  this.staticBuffer=gl.createBuffer();this.dynamicBuffer=gl.createBuffer();this.lodBuffer=gl.createBuffer();this.heatBuffer=gl.createBuffer();
+  this.staticBuffer=gl.createBuffer();this.dynamicBuffer=gl.createBuffer();this.lodBuffer=gl.createBuffer();
   // Non-rectangular footprints use genuine roof and wall triangles rather than box approximations.
   const polyVs=`#version 300 es
   precision highp float;
@@ -1694,16 +1726,35 @@ class CityRenderer{
   gl.bindVertexArray(this.vao);
  gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.disable(gl.CULL_FACE);
   gl.disable(gl.BLEND);gl.clearColor(.085,.12,.15,1);
+  // One texture-mapped plane spans the complete map. The horde image is updated
+  // offscreen at a fixed cadence, avoiding one WebGL draw call per hot cell.
+  const heatVs=`#version 300 es
+  precision highp float;layout(location=0) in vec2 aWorld;layout(location=1) in vec2 aUv;
+  uniform vec2 uFocus,uResolution;uniform float uZoom,uYaw,uTilt,uDepthRange;
+  out vec2 vUv;
+  void main(){vec2 d=aWorld-uFocus;float cy=cos(uYaw),sy=sin(uYaw),st=sin(uTilt),ct=cos(uTilt),z=-0.08;
+   float rx=d.x*cy-d.y*sy,ry=d.x*sy+d.y*cy;
+   gl_Position=vec4(rx*uZoom*2.0/uResolution.x,-(ry*st-z*ct)*uZoom*2.0/uResolution.y,-(ry*ct+z*st)/uDepthRange,1.0);vUv=aUv;}`;
   const heatFs=`#version 300 es
-  precision mediump float;in vec3 vColor;in float vShade;out vec4 fragColor;
-  void main(){fragColor=vec4(0.93,0.18,0.21,0.20+vColor.r*.52);}`;
-  // Heatmap uses flat boxes just above roads; depth testing naturally hides it under roofs.
-  const hp=gl.createProgram();for(const [src,type] of [[vs,gl.VERTEX_SHADER],[heatFs,gl.FRAGMENT_SHADER]]){
+  precision mediump float;uniform sampler2D uHeat;in vec2 vUv;out vec4 fragColor;
+  void main(){float a=texture(uHeat,vUv).a;if(a<.006)discard;vec3 glow=mix(vec3(.65,.018,.035),vec3(1.0,.24,.16),min(1.0,a*1.55));fragColor=vec4(glow,min(.94,a*.92));}`;
+  const hp=gl.createProgram();for(const [src,type] of [[heatVs,gl.VERTEX_SHADER],[heatFs,gl.FRAGMENT_SHADER]]){
    const shader=gl.createShader(type);gl.shaderSource(shader,src);gl.compileShader(shader);
    if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(shader));gl.attachShader(hp,shader);gl.deleteShader(shader)
   }
   gl.linkProgram(hp);if(!gl.getProgramParameter(hp,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(hp));
-  this.heatProgram=hp;this.heatUniforms={focus:gl.getUniformLocation(hp,'uFocus'),resolution:gl.getUniformLocation(hp,'uResolution'),zoom:gl.getUniformLocation(hp,'uZoom'),yaw:gl.getUniformLocation(hp,'uYaw'),tilt:gl.getUniformLocation(hp,'uTilt'),depthRange:gl.getUniformLocation(hp,'uDepthRange')};
+  this.heatProgram=hp;this.heatUniforms={focus:gl.getUniformLocation(hp,'uFocus'),resolution:gl.getUniformLocation(hp,'uResolution'),zoom:gl.getUniformLocation(hp,'uZoom'),yaw:gl.getUniformLocation(hp,'uYaw'),tilt:gl.getUniformLocation(hp,'uTilt'),depthRange:gl.getUniformLocation(hp,'uDepthRange'),heat:gl.getUniformLocation(hp,'uHeat')};
+  this.heatPlaneBuffer=gl.createBuffer();this.heatPlaneVao=gl.createVertexArray();gl.bindVertexArray(this.heatPlaneVao);gl.bindBuffer(gl.ARRAY_BUFFER,this.heatPlaneBuffer);
+  gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,16,0);gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,2,gl.FLOAT,false,16,8);
+  this.heatTexture=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,this.heatTexture);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,0]));
+  const mapVs=heatVs.replace('z=-0.08','z=-2.72'),mapFs=`#version 300 es
+  precision mediump float;uniform sampler2D uMap;in vec2 vUv;out vec4 fragColor;
+  void main(){vec3 base=texture(uMap,vUv).rgb;fragColor=vec4(base*.82+vec3(.015,.035,.04),1.0);}`;
+  const mp=gl.createProgram();for(const [src,type] of [[mapVs,gl.VERTEX_SHADER],[mapFs,gl.FRAGMENT_SHADER]]){const shader=gl.createShader(type);gl.shaderSource(shader,src);gl.compileShader(shader);if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(shader));gl.attachShader(mp,shader);gl.deleteShader(shader)}
+  gl.linkProgram(mp);if(!gl.getProgramParameter(mp,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(mp));
+  this.mapProgram=mp;this.mapUniforms={focus:gl.getUniformLocation(mp,'uFocus'),resolution:gl.getUniformLocation(mp,'uResolution'),zoom:gl.getUniformLocation(mp,'uZoom'),yaw:gl.getUniformLocation(mp,'uYaw'),tilt:gl.getUniformLocation(mp,'uTilt'),depthRange:gl.getUniformLocation(mp,'uDepthRange'),map:gl.getUniformLocation(mp,'uMap')};
+  this.mapTexture=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,this.mapTexture);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));
+  gl.bindVertexArray(this.vao);
  }
  parseColor(color){if(Array.isArray(color))return color;let v=this.palette.get(color);if(v)return v;
   const hex=color.replace('#','');let vals=hex.length===3?hex.split('').map(c=>parseInt(c+c,16)/255):[0,2,4].map(i=>parseInt(hex.substring(i,i+2),16)/255);
@@ -1732,8 +1783,11 @@ class CityRenderer{
   if(activeMap==='nyc'){const cp=CENTRAL_PARK_POLY.map(p=>({x:p.x*nycScale(),y:p.y*nycScale()}));for(let y=Math.min(...cp.map(p=>p.y));y<Math.max(...cp.map(p=>p.y));y+=65)for(let x=Math.min(...cp.map(p=>p.x));x<Math.max(...cp.map(p=>p.x));x+=65)if(manhattanPark(x,y)&&withinManhattan(x,y))box(x,y,-2.3,66,66,1.6,'#558766')}
   for(const p of parks){box(p.x+p.w/2,p.y+p.h/2,-2,p.w+16,p.h+16,1.6,p.locked?'#858b89':'#5b9177');
    if(p.locked)continue;for(const tree of p.trees){box(tree.x,tree.y,3.6,2.5,2.5,8,'#705c42');box(tree.x,tree.y,9,10,10,8,'#4d8466');box(tree.x-1.2,tree.y-.5,13,6.5,6.5,3,'#66a581')}}
-  for(const l of lots)box(l.x+l.w/2,l.y+l.h/2,-2,l.w,l.h,1.7,l.locked?'#96999a':'#7b8485');
+  // The official cartography already contains road and footprint detail. Do not
+  // cover it with the old flat lot blocks once the image layer is available.
+  if(!(activeMap==='nyc'&&nycReferenceMap.ready))for(const l of lots)box(l.x+l.w/2,l.y+l.h/2,-2,l.w,l.h,1.7,l.locked?'#96999a':'#7b8485');
   if(isNYC()){
+   if(!nycReferenceMap.ready){
    // Short visible street segments stop at the real-world-shaped coastline.
    const stride=activeMap==='nyc'?260:42*nycScale(),streetWidth=activeMap==='nyc'?1:nycScale();
    for(const x of XROADS)for(let y=20;y<H-20;y+=stride){if(!(nycFullCityPreview()?nycPreviewBoroughAt(x,y):nycLandAt(x,y))||(activeMap==='nyc'&&withinManhattan(x,y)))continue;
@@ -1741,6 +1795,7 @@ class CityRenderer{
    for(const y of YROADS)for(let x=20;x<W-20;x+=stride){if(!(nycFullCityPreview()?nycPreviewBoroughAt(x,y):nycLandAt(x,y))||(activeMap==='nyc'&&withinManhattan(x,y)))continue;
      box(x,y,-2.5,stride+1,34*streetWidth,2,nycFullCityPreview()&&!nycLandAt(x,y)?'#767c80':'#45565b');box(x,y,-1.5,stride+1,26*streetWidth,1,nycFullCityPreview()&&!nycLandAt(x,y)?'#666e72':'#394b52')}
    if(activeMap==='nyc')for(const r of manhattanRoads){box(r.x,r.y,-2.4,r.w,r.h+4,2,'#4a5f64',r.angle);box(r.x,r.y,-1.35,r.w,r.h*.72,1.2,'#405358',r.angle)}
+   }
   }else{
   for(const x of VIS_XROADS){const future=x>W;box(x,VIS_H/2,-3.3,54,VIS_H,2,future?'#787f80':'#4c5a61');box(x,VIS_H/2,-2.2,41,VIS_H,1,future?'#6d7476':'#34434c');
    for(let y=18;y<VIS_H-12;y+=75)box(x,y,-1.46,1.8,30,.8,y>H?'#9ba0a0':'#b5b6a0')}
@@ -2038,6 +2093,14 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
 
  bindInstances(buffer,instanceOffset=0){const gl=this.gl;gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   for(const [loc,n,off] of [[2,3,0],[3,3,12],[4,3,24],[5,1,36]]){gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,n,gl.FLOAT,false,40,off+instanceOffset*40);gl.vertexAttribDivisor(loc,1)}}
+ syncHeatPlane(){if(this.heatWorldW===W&&this.heatWorldH===H)return;const gl=this.gl;this.heatWorldW=W;this.heatWorldH=H;
+  gl.bindBuffer(gl.ARRAY_BUFFER,this.heatPlaneBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([0,0,0,0,W,0,1,0,W,H,1,1,0,0,0,0,W,H,1,1,0,H,0,1]),gl.STATIC_DRAW)}
+ renderHeatPlane(uniforms){const heat=updateZombieHeatmap();if(!heat.length||!heatState.canvas)return;const gl=this.gl;this.syncHeatPlane();
+  gl.useProgram(this.heatProgram);gl.bindVertexArray(this.heatPlaneVao);uniforms(this.heatUniforms);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.heatTexture);gl.uniform1i(this.heatUniforms.heat,0);
+  if(heatState.dirty){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,heatState.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);heatState.dirty=false}
+  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArrays(gl.TRIANGLES,0,6);gl.depthMask(true);gl.disable(gl.BLEND);gl.useProgram(this.program);gl.bindVertexArray(this.vao);uniforms(this.uniforms)}
+ renderReferenceMap(uniforms){if(activeMap!=='nyc'||!nycReferenceMap.ready||!nycReferenceMap.canvas)return;const gl=this.gl;this.syncHeatPlane();gl.useProgram(this.mapProgram);gl.bindVertexArray(this.heatPlaneVao);uniforms(this.mapUniforms);gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,this.mapTexture);gl.uniform1i(this.mapUniforms.map,1);
+  if(nycReferenceMap.dirty){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,nycReferenceMap.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);nycReferenceMap.dirty=false}gl.drawArrays(gl.TRIANGLES,0,6);gl.useProgram(this.program);gl.bindVertexArray(this.vao);uniforms(this.uniforms)}
  render(){if(!this.ready)return;if(this.software)return this.renderSoftware();if(this.needsBuild||!this.staticData)this.rebuild();const gl=this.gl;
   if(this.canvas.width!==canvas.width||this.canvas.height!==canvas.height){this.canvas.width=canvas.width;this.canvas.height=canvas.height}
   gl.viewport(0,0,this.canvas.width,this.canvas.height);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.useProgram(this.program);gl.bindVertexArray(this.vao);
@@ -2045,23 +2108,8 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
   const uniforms=(u)=>{gl.uniform2f(u.focus,c.x,c.y);gl.uniform2f(u.resolution,cw,ch);gl.uniform1f(u.zoom,cam.zoom);gl.uniform1f(u.yaw,camera3D.yaw);gl.uniform1f(u.tilt,camera3D.tilt);gl.uniform1f(u.depthRange,depthRange)};
   uniforms(this.uniforms);
   this.bindInstances(this.staticBuffer);gl.drawArraysInstanced(gl.TRIANGLES,0,36,this.sceneGroundCount);
-  // GPU heatmap is rendered at z=-0.3 between actual 3D ground and buildings.
-  const heat=updateZombieHeatmap();
-  if(heat.length){
-   const a=[],viewR=Math.hypot(cw,ch)/Math.max(cam.zoom,.001);
-   const radius=75;
-   let emitted=0;
-   for(const b of heat){if(Math.abs(b.x-c.x)>viewR||Math.abs(b.y-c.y)>viewR)continue;
-    const r=clamp(27+Math.sqrt(b.count)*7,29,108),strength=Math.min(1,.36+b.count/23);
-    // Multiple translucent shallow discs, not a whole-map image.
-    this.box(a,b.x,b.y,-.28,r*2,r*2,.3,[strength,.12,.16]);
-    if(++emitted>=1050)break;
-   }
-   if(a.length){gl.useProgram(this.heatProgram);uniforms(this.heatUniforms);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
-    gl.bindBuffer(gl.ARRAY_BUFFER,this.heatBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(a),gl.DYNAMIC_DRAW);this.bindInstances(this.heatBuffer);gl.drawArraysInstanced(gl.TRIANGLES,0,36,a.length/10);
-    gl.depthMask(true);gl.disable(gl.BLEND);gl.useProgram(this.program);uniforms(this.uniforms);
-   }
-  }
+  this.renderReferenceMap(uniforms);
+  this.renderHeatPlane(uniforms);
   if(lowDetailView()){this.bindInstances(this.lodBuffer);gl.drawArraysInstanced(gl.TRIANGLES,0,36,this.lodCount)}
   else {this.bindInstances(this.staticBuffer,this.sceneGroundCount);gl.drawArraysInstanced(gl.TRIANGLES,0,36,this.staticCount-this.sceneGroundCount)}
   if(this.polyCount){gl.useProgram(this.polyProgram);gl.bindVertexArray(this.polyVao);uniforms(this.polyUniforms);
@@ -2090,13 +2138,29 @@ function render3DRanges(){let count=0;
 }
 
 let strategicRoofs=null; // compatibility with collapse event invalidation
-// Compact world-space density histogram shared by GPU and software renderers.
-// Updated at most 4 times per second. Cached results avoid rebuilding per frame.
-const heatState={until:0,cells:[],cell:64};
+// Compact density texture shared by GPU and software renderers. The canvas is
+// one image for the entire world; it never replaces the 3D scene or models.
+const heatState={until:0,cells:[],cell:64,canvas:null,ctx:null,stamp:null,dirty:true,width:0,height:0};
+function ensureHeatCanvas(){
+ const wide=W>=H,base=isNYC()?1024:512,w=wide?base:Math.max(2,Math.round(base*W/H)),h=wide?Math.max(2,Math.round(base*H/W)):base;
+ if(heatState.canvas&&heatState.width===w&&heatState.height===h)return heatState.canvas;
+ heatState.canvas=document.createElement('canvas');heatState.canvas.width=w;heatState.canvas.height=h;heatState.ctx=heatState.canvas.getContext('2d');heatState.width=w;heatState.height=h;heatState.dirty=true;return heatState.canvas;
+}
+function heatmapStamp(){if(heatState.stamp)return heatState.stamp;const stamp=document.createElement('canvas');stamp.width=128;stamp.height=128;
+ const c=stamp.getContext('2d'),g=c.createRadialGradient(64,64,0,64,64,64);
+ g.addColorStop(0,'rgba(255,67,72,.98)');g.addColorStop(.18,'rgba(244,49,61,.78)');g.addColorStop(.48,'rgba(213,32,47,.42)');g.addColorStop(.76,'rgba(164,15,32,.13)');g.addColorStop(1,'rgba(128,0,20,0)');
+ c.fillStyle=g;c.fillRect(0,0,128,128);heatState.stamp=stamp;return stamp;
+}
+function paintHordeTexture(){
+ const surface=ensureHeatCanvas(),c=heatState.ctx,stamp=heatmapStamp();c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,surface.width,surface.height);
+ if(heatState.cells.length){const scale=Math.sqrt(surface.width*surface.height/(W*H));c.save();c.globalCompositeOperation='lighter';
+ for(const b of heatState.cells){const radius=Math.max(8,clamp(72+Math.sqrt(b.count)*16,78,260)*scale),x=b.x/W*surface.width,y=b.y/H*surface.height;c.globalAlpha=Math.min(1,.68+Math.log2(b.count+1)*.13);c.drawImage(stamp,x-radius,y-radius,radius*2,radius*2)}
+  c.restore();}
+ heatState.dirty=true;
+}
 function updateZombieHeatmap(now=performance.now()){
- if(!zombies.length){heatState.cells=[];return heatState.cells}
- // Avoid heatmap allocation and GPU buffer churn while actively zooming.
- // Zoom changes keep the existing density visible; no disappearing heat layer.
+ if(!zombies.length){if(heatState.cells.length){heatState.cells=[];paintHordeTexture()}return heatState.cells}
+ // Updating the world image at four frames per second keeps pinch/pan responsive.
  if(now<heatState.until)return heatState.cells;
  heatState.until=now+240;
  const cell=44,bins=new Map();
@@ -2109,22 +2173,13 @@ function updateZombieHeatmap(now=performance.now()){
  }
  heatState.cells=Array.from(bins.values(),b=>({x:b.x/b.n,y:b.y/b.n,count:b.n*stride}));
  heatState.cell=cell;
+ paintHordeTexture();
  return heatState.cells;
 }
-let heatStamp=null;
-function heatmapStamp(){if(heatStamp)return heatStamp;heatStamp=document.createElement('canvas');heatStamp.width=64;heatStamp.height=64;
- const c=heatStamp.getContext('2d'),g=c.createRadialGradient(32,32,0,32,32,32);
- g.addColorStop(0,'rgba(248,72,77,.85)');g.addColorStop(.42,'rgba(218,59,69,.53)');g.addColorStop(.75,'rgba(179,42,55,.18)');g.addColorStop(1,'rgba(179,42,55,0)');
- c.fillStyle=g;c.fillRect(0,0,64,64);return heatStamp;
-}
-function drawSoftwareGroundHeat(c,visible){
- const cells=updateZombieHeatmap();if(!cells.length)return;
- const stamp=heatmapStamp();c.save();c.globalAlpha=.75;
- for(const b of cells){if(!visible(b.x,b.y))continue;
-  const p=project3D(b.x,b.y,-.3),rad=clamp((27+Math.sqrt(b.count)*7)*cam.zoom,2.2,38);
-  c.drawImage(stamp,p.x-rad,p.y-rad,rad*2,rad*2);
- }
- c.restore();
+function drawSoftwareGroundHeat(c){
+ const cells=updateZombieHeatmap();if(!cells.length||!heatState.canvas)return;
+ const f=cameraFocus(),cs=Math.cos(camera3D.yaw),sn=Math.sin(camera3D.yaw),st=Math.sin(camera3D.tilt),A=cs*cam.zoom,B=sn*st*cam.zoom,C=-sn*cam.zoom,D=cs*st*cam.zoom;
+ c.save();c.globalAlpha=.82;c.setTransform(dpr*A,dpr*B,dpr*C,dpr*D,dpr*(cw/2-A*f.x-C*f.y),dpr*(ch/2-B*f.x-D*f.y));c.drawImage(heatState.canvas,0,0,W,H);c.restore();
 }
 function drawWorldOverlay(){
 
