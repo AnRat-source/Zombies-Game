@@ -372,7 +372,11 @@ const garrisonInterval=u=>Math.max(5,13.5-2*(Math.max(1,u.level||1)-1));
 const gateUpgradeCost=g=>Math.ceil((95+65*Math.pow(g.level||1,1.4))/5)*5;
 
 let wallGrid=new Map(),wallGridDirty=true;
-function buildingHeight(b){return 14+b.height*13+b.shade*.7}
+function buildingCoreHeight(b){return 14+b.height*13+b.shade*.7}
+// Manhattan towers get a stepped crown and (on the tallest towers) an antenna.
+// Keep the physical height in one place so roof placement, falling meshes, and
+// impact reach all agree with what the player sees.
+function buildingHeight(b){const core=buildingCoreHeight(b);if(!isNYC()||core<165)return core;return core*(core>=390?1.43:core>=270?1.31:1.18)}
 function roofBuildingAt(x,y){const bucket=buildingGrid.get(Math.floor(x/CELL)+Math.floor(y/CELL)*GRIDCOLS)||[];return bucket.find(b=>!b.collapsed&&!b.collapsing&&manhattanBuildingContains(b,x,y,5))||null}
 function rebuildBuildingGrid(){buildingGrid.clear();for(const b of buildings){if(b.collapsed||b.locked)continue;for(let gy=Math.floor(b.y/CELL);gy<=Math.floor((b.y+b.h)/CELL);gy++)for(let gx=Math.floor(b.x/CELL);gx<=Math.floor((b.x+b.w)/CELL);gx++){const key=gx+gy*GRIDCOLS;let bucket=buildingGrid.get(key);if(!bucket){bucket=[];buildingGrid.set(key,bucket)}bucket.push(b)}}}
 function rebuildWallGrid(){wallGrid.clear();for(const w of walls){if(w.hp<=0)continue;const x1=Math.floor((Math.min(w.ax,w.bx)-13)/CELL),x2=Math.floor((Math.max(w.ax,w.bx)+13)/CELL),y1=Math.floor((Math.min(w.ay,w.by)-13)/CELL),y2=Math.floor((Math.max(w.ay,w.by)+13)/CELL);for(let yy=y1;yy<=y2;yy++)for(let xx=x1;xx<=x2;xx++){const key=xx+yy*GRIDCOLS;let bucket=wallGrid.get(key);if(!bucket){bucket=[];wallGrid.set(key,bucket)}bucket.push(w)}}wallGridDirty=false}
@@ -1076,26 +1080,42 @@ function clampStrikeEnd(start,end){const d=Math.hypot(end.x-start.x,end.y-start.
 function commitStrafe(d){const end=clampStrikeEnd(d.start,d.cur),len=Math.hypot(end.x-d.start.x,end.y-d.start.y);if(len<55){notify('Drag at least 55m to choose an airstrike direction.',true);return}sendSupport('strafe',(d.start.x+end.x)/2,(d.start.y+end.y)/2,{start:d.start,end})}
 // Heavy game explosions can collapse nearby towers. Destruction is intentionally
 // local and capped, so a large city never rebuilds all structures every tick.
+function beginBuildingCollapse(b,{dir=rnd(0,TAU),delay=0,chainDepth=0}={}){if(!b||b.collapsed||b.collapsing)return false;
+ const height=buildingHeight(b);strategicRoofs=null;
+ b.collapsing={t:0,delay,duration:clamp(1.04+height/680,1.05,2.25),dir,height,impact:false,chainDepth};fallingBuildings.push(b);
+ // Mounted equipment falls with the building; never leave floating turrets.
+ for(const u of defenses)if(u.roofKey===b.key){u.hp=0;u.flash=0;if(selected===u)selected=null}
+ effects.push({type:'ring',x:b.x+b.w/2,y:b.y+b.h/2,r:5,max:Math.min(52,18+height*.055),life:.6,maxLife:.6,color:'#ffe0a0'});
+ return true
+}
 function tryCollapseBuildings(x,y,radius,power=.3,maxCollapses=2){let hits=0;const seen=new Set(),candidates=[];
  eachNearby(buildingGrid,x,y,radius+95,b=>{if(seen.has(b)||b.collapsed||b.collapsing)return;seen.add(b);
  const distance=rectDistance(x,y,b),height=buildingHeight(b);
  if(distance<radius+Math.min(36,height*.25))candidates.push({b,distance,prob:clamp(power*(1-distance/(radius+48))*(.72+height/160),.035,.78)})});
  candidates.sort((a,b)=>a.distance-b.distance);
- for(const {b,prob} of candidates){if(hits>=maxCollapses)break;if(Math.random()>prob)continue;
- strategicRoofs=null;b.collapsing={t:0,duration:1.25,dir:rnd(0,TAU),height:buildingHeight(b),impact:false};fallingBuildings.push(b);hits++;
- // Mounted equipment falls with the building; never leave floating turrets.
- for(const u of defenses)if(u.roofKey===b.key){u.hp=0;u.flash=0;if(selected===u)selected=null}
- effects.push({type:'ring',x:b.x+b.w/2,y:b.y+b.h/2,r:5,max:24,life:.6,maxLife:.6,color:'#ffe0a0'});
- }
+ for(const {b,prob} of candidates){if(hits>=maxCollapses)break;if(Math.random()>prob)continue;if(beginBuildingCollapse(b))hits++}
  if(hits){world3D.needsBuild=true;log(hits+' building'+(hits===1?' is':'s are')+' collapsing after a heavy impact!')}
  return hits}
 function updateBuildingCollapses(dt){let completed=false;
- for(const b of fallingBuildings){const c=b.collapsing;if(!c)continue;c.t=Math.min(c.duration,c.t+dt);const q=c.t/c.duration;
- if(!c.impact&&q>=.74){c.impact=true;const x=b.x+b.w/2,y=b.y+b.h/2,dx=Math.cos(c.dir)*c.height*.68,dy=Math.sin(c.dir)*c.height*.68;
- const radius=Math.max(b.w,b.h)*.44+9,reach=c.height*.85;
+ for(const b of fallingBuildings){const c=b.collapsing;if(!c)continue;if(c.delay>0){c.delay-=dt;continue}c.t=Math.min(c.duration,c.t+dt);const q=c.t/c.duration;
+ if(!c.impact&&q>=.74){c.impact=true;const x=b.x+b.w/2,y=b.y+b.h/2,dx=Math.cos(c.dir)*c.height*.70,dy=Math.sin(c.dir)*c.height*.70;
+ const mass=clamp(c.height/115,1,9),radius=Math.max(b.w,b.h)*.48+10+c.height*.065,reach=c.height*(.74+mass*.025);
  eachNearby(zombieGrid,x+dx*.45,y+dy*.45,reach+radius,z=>{if(z.alive&&distanceToLine(z.x,z.y,x,y,x+dx,y+dy)<radius){z.hp=0;killZombie(z)}});
- effects.push({type:'blast',x:x+dx*.65,y:y+dy*.65,r:10,max:Math.min(87,reach*.8),life:.7,maxLife:.7});
- for(let k=0;k<5;k++)effects.push({type:'smoke',x:x+dx*.6+rnd(-35,35),y:y+dy*.6+rnd(-32,32),r:rnd(6,13),max:40,life:rnd(.45,1.05),maxLife:1.05});effectSound('blast')}
+ // A tall tower can knock over a few shorter neighbors in its falling path.
+ // Depth and the strict height check cap a chain before it can spread citywide.
+ if(c.chainDepth<2&&c.height>=145){const candidates=[],seen=new Set(),tipX=x+dx*.78,tipY=y+dy*.78,query=reach*.58+radius*3;
+  eachNearby(buildingGrid,tipX,tipY,query,other=>{if(seen.has(other)||other===b||other.collapsed||other.collapsing)return;seen.add(other);
+   const ox=other.x+other.w*.5,oy=other.y+other.h*.5,oh=buildingHeight(other),along=(ox-x)*Math.cos(c.dir)+(oy-y)*Math.sin(c.dir),side=Math.abs(distanceToLine(ox,oy,x,y,x+dx,y+dy)),otherRadius=Math.max(other.w,other.h)*.48;
+   if(oh>=c.height*.88||along< -otherRadius||along>reach+otherRadius||side>radius+otherRadius) return;
+   const force=(c.height/Math.max(oh,1))*(1-side/(radius+otherRadius))*(.55+along/Math.max(reach,1)*.45);
+   if(force>.96)candidates.push({other,force,along})
+  });
+  candidates.sort((a,b)=>b.force-a.force||a.along-b.along);
+  let toppled=0;for(let i=0;i<candidates.length&&toppled<3;i++){const hit=candidates[i];if(hit.force<1.25&&Math.random()>.45)continue;if(beginBuildingCollapse(hit.other,{dir:c.dir+rnd(-.2,.2),delay:.12+toppled*.12,chainDepth:c.chainDepth+1}))toppled++}
+  if(toppled)world3D.needsBuild=true
+ }
+ effects.push({type:'blast',x:x+dx*.65,y:y+dy*.65,r:10,max:Math.min(220,reach*.64+radius*1.35),life:.8,maxLife:.8});
+ for(let k=0;k<Math.min(13,4+Math.ceil(mass));k++)effects.push({type:'smoke',x:x+dx*.6+rnd(-radius,radius),y:y+dy*.6+rnd(-radius,radius),r:rnd(6,13+mass),max:42+mass*6,life:rnd(.45,1.15),maxLife:1.15});effectSound('blast')}
  if(q>=1){b.collapsed=true;b.collapsing=null;completed=true;const c2=staticMap?.getContext('2d');if(c2){c2.save();c2.scale(staticMap.width/W,staticMap.height/H);c2.fillStyle='#626e6abf';c2.fillRect(b.x+2,b.y+2,b.w-4,b.h-4);c2.restore()}}}
  fallingBuildings=fallingBuildings.filter(b=>!!b.collapsing);
  if(completed){rebuildBuildingGrid();refreshNavigation();world3D.needsBuild=true}
@@ -1638,16 +1658,14 @@ function drawLegacyCanvas(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,
 // The simulation still runs in city-plane coordinates. The renderer extrudes that
 // plane into actual depth-tested 3D geometry with an orbitable orthographic camera.
 const camera3D={yaw:-0.22,tilt:1.51}; // ~86.5-degree bird's-eye camera, still depth-tested 3D.
-// Zoom transitions intentionally use cheaper meshes before the costly thresholds.
-// Hysteresis prevents rapidly toggling between full and low-detail scenes during pinch.
+// Only the full-city overview uses the inexpensive silhouette mesh.  Switching
+// meshes during normal zooms made the city appear to flash gray.
 const zoomPerf={movingUntil:0,lowDetail:false,lastLevel:-1};
 function markZoomMoving(){zoomPerf.movingUntil=performance.now()+330}
 function lowDetailView(){
- const moving=performance.now()<zoomPerf.movingUntil;
  const z=cam.zoom;
- const movingEnter=deviceProfile.constrained ? .56 : .43,stillEnter=deviceProfile.constrained ? .28 : .20,exit=deviceProfile.constrained ? .42 : .35;
- if(moving&&z<movingEnter)zoomPerf.lowDetail=true;
- else if(z<stillEnter)zoomPerf.lowDetail=true;
+ const enter=deviceProfile.constrained?.065:.038,exit=deviceProfile.constrained?.11:.07;
+ if(z<enter)zoomPerf.lowDetail=true;
  else if(z>exit)zoomPerf.lowDetail=false;
  return zoomPerf.lowDetail;
 }
@@ -1758,7 +1776,7 @@ class CityRenderer{
    gl_Position=vec4(rx*uZoom*2.0/uResolution.x,-(ry*st-z*ct)*uZoom*2.0/uResolution.y,-(ry*ct+z*st)/uDepthRange,1.0);vUv=aUv;}`;
   const heatFs=`#version 300 es
   precision mediump float;uniform sampler2D uHeat;in vec2 vUv;out vec4 fragColor;
-  void main(){float a=texture(uHeat,vUv).a;if(a<.006)discard;vec3 glow=mix(vec3(.65,.018,.035),vec3(1.0,.24,.16),min(1.0,a*1.55));fragColor=vec4(glow,min(.94,a*.92));}`;
+  void main(){vec4 heat=texture(uHeat,vUv);float a=max(heat.a,max(heat.r,max(heat.g,heat.b)));if(a<.006)discard;float bright=max(heat.r,max(heat.g,heat.b));vec3 tint=heat.rgb/max(.003,bright);vec3 glow=min(vec3(1.0),tint*(.34+bright*1.25));fragColor=vec4(glow,min(.94,a*.92));}`;
   const hp=gl.createProgram();for(const [src,type] of [[heatVs,gl.VERTEX_SHADER],[heatFs,gl.FRAGMENT_SHADER]]){
    const shader=gl.createShader(type);gl.shaderSource(shader,src);gl.compileShader(shader);
    if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(shader));gl.attachShader(hp,shader);gl.deleteShader(shader)
@@ -1842,11 +1860,19 @@ class CityRenderer{
   this.sceneGroundCount=a.length/10;
   const lod=[];const lodBox=(...v)=>this.box(lod,...v);
   const baseColors=['#b2b7b2','#9eafb4','#c3b5a5','#8fa2a8','#b4b8b5','#a7a99e','#a3b9bc'];
-  for(let bi=0;bi<buildings.length;bi++){if(bi%90===0)yield 1;const b=buildings[bi];if(b.collapsing||b.verts)continue;const h=14+b.height*13+(b.shade*.7),cx=b.cx??b.x+b.w*.5,cy=b.cy??b.y+b.h*.5,col=baseColors[b.roof%baseColors.length];
+  const addSkyscraper=(b,cx,cy,w,h,col,angle=0)=>{const core=buildingCoreHeight(b),top=buildingHeight(b),spire=core>=390?Math.min(48,core*.095):0,roofTop=top-spire,baseTop=core*.70,shoulderBase=core*.51,shoulderTop=roofTop*.84,crownBase=roofTop*.70;
+   box(cx,cy,baseTop*.5,w,h,baseTop,col,angle);
+   box(cx,cy,(shoulderBase+shoulderTop)*.5,w*.78,h*.78,shoulderTop-shoulderBase,b.shade>.54?'#b7c7c8':'#9eb3ba',angle);
+   box(cx,cy,(crownBase+roofTop)*.5,w*.55,h*.55,roofTop-crownBase,'#c5d2d0',angle);
+   box(cx,cy,roofTop+.9,w*.58,h*.58,1.8,'#dbe3db',angle);
+   if(spire)box(cx,cy,roofTop+spire*.5,2.6,2.6,spire,'#dce8e3',angle)
+  };
+  for(let bi=0;bi<buildings.length;bi++){if(bi%90===0)yield 1;const b=buildings[bi];if(b.collapsing||b.verts)continue;const core=buildingCoreHeight(b),h=buildingHeight(b),tower=isNYC()&&h>core+1,cx=b.cx??b.x+b.w*.5,cy=b.cy??b.y+b.h*.5,col=baseColors[b.roof%baseColors.length];
    lodBox(cx,cy,h*.5,b.footW||b.w,b.footH||b.h,h,b.locked?'#9da2a4':col,b.angle||0);
    if(b.locked){box(cx,cy,h*.5,b.footW||b.w,b.footH||b.h,h,['#9da2a4','#aeb2b3','#8b9295','#b9bdbd'][b.roof%4],b.angle||0);continue}
-   if(b.footW){if(b.collapsed){box(cx,cy,2.3,b.footW,b.footH,4,'#77837b',b.angle);continue}box(cx,cy,h*.5,b.footW,b.footH,h,col,b.angle);box(cx,cy,h+.8,b.footW+1.3,b.footH+1.3,1.7,'#c8d4cf',b.angle);if(b.vent)box(cx,cy,h+3.2,7,6,5,'#667e7d',b.angle);continue}
+   if(b.footW){if(b.collapsed){box(cx,cy,2.3,b.footW,b.footH,4,'#77837b',b.angle);continue}if(tower){addSkyscraper(b,cx,cy,b.footW,b.footH,col,b.angle);continue}box(cx,cy,h*.5,b.footW,b.footH,h,col,b.angle);box(cx,cy,h+.8,b.footW+1.3,b.footH+1.3,1.7,'#c8d4cf',b.angle);if(b.vent)box(cx,cy,h+3.2,7,6,5,'#667e7d',b.angle);continue}
    if(b.collapsed){for(let k=0;k<3;k++){const off=(k-1)*b.w*.18;box(cx+off,cy+(k-1)*b.h*.11,2.5+k*.6,b.w*.65,b.h*.37,3.8,k%2?'#747b74':'#6e7775',(k-1)*.3)}continue}
+   if(tower){addSkyscraper(b,cx,cy,b.w,b.h,col);continue}
    box(cx,cy,h*.5,b.w,b.h,h,col);
    box(cx,cy,h+.85,b.w+1.4,b.h+1.4,1.8,b.shade>.5?'#cfd5cd':'#b0c1c1');
    if(b.vent){box(b.x+b.w*.28,b.y+b.h*.25,h+4,8,7,6,'#5c7076');box(b.x+b.w*.28,b.y+b.h*.25,h+7.6,9,8,1.1,'#a6b9b7')}
@@ -1961,7 +1987,7 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
   // At neighborhood zoom draw EVERY nearby moving cohort, not every Nth
   // cohort city-wide. Reuse the existing spatial index and a bounded cell
   // query so this is both denser and cheaper than scanning the full city.
-  const maxVisibleCivs=Math.max(80,Math.round((performance.now()<zoomPerf.movingUntil?Math.min(380,this.software?1000:4400):cam.zoom<.035?110:cam.zoom<.14?260:cam.zoom<.32?800:(this.software?1900:4400))*visualScale));
+  const maxVisibleCivs=Math.max(80,Math.round((cam.zoom<.035?110:cam.zoom<.14?260:cam.zoom<.32?800:(this.software?1900:4400))*visualScale));
   let visibleCivs=0,extraCivs=0;
   const extraCap=cam.zoom<.32?0:Math.round((this.software?450:1100)*visualScale);
   const showCivilian=(p)=>{
@@ -1984,20 +2010,14 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
     }
    }
   };
-  if(isNYC()&&cam.zoom>.12){
-   const radius=Math.hypot(sx,sy)+110;
-   const x0=Math.max(0,Math.floor((focus.x-radius)/CELL));
-   const x1=Math.min(GRIDCOLS-1,Math.ceil((focus.x+radius)/CELL));
-   const y0=Math.max(0,Math.floor((focus.y-radius)/CELL));
-   const y1=Math.ceil((focus.y+radius)/CELL);
-   // Fall back to a global sample at huge zoom-out distances.
-   if((x1-x0+1)*(y1-y0+1)<16000){
-    outerCivs:for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++){
-     for(const p of civGrid.get(xx+yy*GRIDCOLS)||[])showCivilian(p);
-     if(visibleCivs>=maxVisibleCivs)break outerCivs;
-    }
-   }else{const step=Math.max(1,Math.ceil(people.length/maxVisibleCivs));for(let i=0;i<people.length;i+=step)showCivilian(people[i])}
-  }else{const step=Math.max(1,Math.ceil(people.length/maxVisibleCivs));for(let i=0;i<people.length;i+=step)showCivilian(people[i])}
+  const entityRadius=Math.hypot(sx,sy)+110,entityX0=Math.max(0,Math.floor((focus.x-entityRadius)/CELL)),entityX1=Math.min(GRIDCOLS-1,Math.ceil((focus.x+entityRadius)/CELL)),entityY0=Math.max(0,Math.floor((focus.y-entityRadius)/CELL)),entityY1=Math.min(Math.ceil(H/CELL)-1,Math.ceil((focus.y+entityRadius)/CELL)),localEntityCells=(entityX1-entityX0+1)*(entityY1-entityY0+1)<16000;
+  const visitVisibleEntities=(grid,items,draw,limit,budget)=>{
+   if(localEntityCells){outerEntities:for(let yy=entityY0;yy<=entityY1;yy++)for(let xx=entityX0;xx<=entityX1;xx++){
+    for(const item of grid.get(xx+yy*GRIDCOLS)||[])draw(item);
+    if(limit())break outerEntities;
+   }}else{const step=Math.max(1,Math.ceil(items.length/Math.max(1,budget)));for(let i=0;i<items.length;i+=step)draw(items[i])}
+  };
+  visitVisibleEntities(civGrid,people,showCivilian,()=>visibleCivs>=maxVisibleCivs,maxVisibleCivs);
   // Weighted civilians at a gated entrance are visualized as a crowd.
   // The instanced draw cap preserves FPS even during mass evacuations.
   if(cam.zoom>.22)for(const g of gates){
@@ -2018,10 +2038,10 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
     if(detail&&i%2===0)box(x,y,7.5,2.6,2.6,3,'#e5cdb2')
    }
   }
-  const zombieCap=Math.max(70,Math.round((performance.now()<zoomPerf.movingUntil?220:cam.zoom<.035?130:cam.zoom<.14?360:cam.zoom<.32?850:(this.software?1150:2600))*visualScale));
-  const zombieVisualStride=Math.max(1,Math.ceil(zombies.length/zombieCap));
-  for(let zi=0;zi<zombies.length;zi+=zombieVisualStride){const z=zombies[zi];if(!z.alive||!inView(z.x,z.y))continue;const c=z.flash>0?'#fff0c9':'#c84d54';
-   box(z.x,z.y,3.7,4.3,4.3,7.3,c);if(detail)box(z.x,z.y,9.0,4.5,4.3,3.3,'#de786a')}
+  const zombieCap=Math.max(70,Math.round((cam.zoom<.035?130:cam.zoom<.14?360:cam.zoom<.32?850:(this.software?1150:2600))*visualScale));
+  let visibleZombies=0;const showZombie=(z)=>{if(visibleZombies>=zombieCap||!z.alive||!inView(z.x,z.y))return;visibleZombies++;const c=z.flash>0?'#fff0c9':'#c84d54';
+   box(z.x,z.y,3.7,4.3,4.3,7.3,c);if(detail)box(z.x,z.y,9.0,4.5,4.3,3.3,'#de786a')};
+  visitVisibleEntities(zombieGrid,zombies,showZombie,()=>visibleZombies>=zombieCap,zombieCap);
   for(const u of defenses)if(u.hp>0&&!u.departed&&inView(u.x,u.y))this.addDefenseMeshes(a,u);
   for(const p of parachutes){const q=clamp(p.age/p.duration,0,1),height=(1-q)*(p.kind==='tank'?125:90);box(p.x,p.y,height+10,p.kind==='tank'?20:7,p.kind==='tank'?20:7,7,p.kind==='tank'?'#98a997':'#b0d5e4');box(p.x,p.y,height+28,p.kind==='tank'?31:18,p.kind==='tank'?31:18,3,'#e7e0c8')}
   for(const a2 of aircraft){const t=clamp(a2.age/a2.duration,0,1),x=a2.sx+(a2.ex-a2.sx)*t,y=a2.sy+(a2.ey-a2.sy)*t,rot=Math.atan2(a2.ey-a2.sy,a2.ex-a2.sx),h=125;
@@ -2120,7 +2140,7 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
  }
  syncHeatPlane(){if(this.heatWorldW===W&&this.heatWorldH===H)return;const gl=this.gl;this.heatWorldW=W;this.heatWorldH=H;
   gl.bindBuffer(gl.ARRAY_BUFFER,this.heatPlaneBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([0,0,0,0,W,0,1,0,W,H,1,1,0,0,0,0,W,H,1,1,0,H,0,1]),gl.STATIC_DRAW)}
- renderHeatPlane(uniforms){const heat=updateZombieHeatmap();if(!heat.length||!heatState.canvas)return;const gl=this.gl;this.syncHeatPlane();
+ renderHeatPlane(uniforms){const heat=updateZombieHeatmap();if((!heat.length&&!heatState.civilianCells.length)||!heatState.canvas)return;const gl=this.gl;this.syncHeatPlane();
   gl.useProgram(this.heatProgram);gl.bindVertexArray(this.heatPlaneVao);uniforms(this.heatUniforms);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.heatTexture);gl.uniform1i(this.heatUniforms.heat,0);
   if(heatState.dirty){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,heatState.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);heatState.dirty=false}
   gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArrays(gl.TRIANGLES,0,6);gl.depthMask(true);gl.disable(gl.BLEND);gl.useProgram(this.program);gl.bindVertexArray(this.vao);uniforms(this.uniforms)}
@@ -2165,33 +2185,35 @@ function render3DRanges(){let count=0;
 let strategicRoofs=null; // compatibility with collapse event invalidation
 // Compact density texture shared by GPU and software renderers. The canvas is
 // one image for the entire world; it never replaces the 3D scene or models.
-const heatState={until:0,cells:[],cell:64,canvas:null,ctx:null,stamp:null,dirty:true,width:0,height:0,glowScale:1};
+const heatState={until:0,cells:[],civilianCells:[],cell:64,canvas:null,ctx:null,stamps:{},dirty:true,width:0,height:0,glowScale:1};
 function ensureHeatCanvas(){
  const wide=W>=H,base=isNYC()?deviceProfile.heatBase:Math.min(512,deviceProfile.heatBase),w=wide?base:Math.max(2,Math.round(base*W/H)),h=wide?Math.max(2,Math.round(base*H/W)):base;
  if(heatState.canvas&&heatState.width===w&&heatState.height===h)return heatState.canvas;
  heatState.canvas=document.createElement('canvas');heatState.canvas.width=w;heatState.canvas.height=h;heatState.ctx=heatState.canvas.getContext('2d');heatState.width=w;heatState.height=h;heatState.dirty=true;return heatState.canvas;
 }
-function heatmapStamp(){if(heatState.stamp)return heatState.stamp;const stamp=document.createElement('canvas');stamp.width=128;stamp.height=128;
+function heatmapStamp(kind='zombie'){if(heatState.stamps[kind])return heatState.stamps[kind];const stamp=document.createElement('canvas');stamp.width=128;stamp.height=128;
  const c=stamp.getContext('2d'),g=c.createRadialGradient(64,64,0,64,64,64);
- g.addColorStop(0,'rgba(255,67,72,.98)');g.addColorStop(.18,'rgba(244,49,61,.78)');g.addColorStop(.48,'rgba(213,32,47,.42)');g.addColorStop(.76,'rgba(164,15,32,.13)');g.addColorStop(1,'rgba(128,0,20,0)');
- c.fillStyle=g;c.fillRect(0,0,128,128);heatState.stamp=stamp;return stamp;
+ if(kind==='civilian'){g.addColorStop(0,'rgba(72,229,214,.78)');g.addColorStop(.20,'rgba(46,190,201,.55)');g.addColorStop(.50,'rgba(38,145,187,.27)');g.addColorStop(.78,'rgba(25,102,157,.08)');g.addColorStop(1,'rgba(10,70,130,0)')}
+ else{g.addColorStop(0,'rgba(255,67,72,.98)');g.addColorStop(.18,'rgba(244,49,61,.78)');g.addColorStop(.48,'rgba(213,32,47,.42)');g.addColorStop(.76,'rgba(164,15,32,.13)');g.addColorStop(1,'rgba(128,0,20,0)')}
+ c.fillStyle=g;c.fillRect(0,0,128,128);heatState.stamps[kind]=stamp;return stamp;
 }
 function hordeGlowScale(){return clamp(.72/Math.sqrt(Math.max(.05,cam.zoom)),.42,1.5)}
 function paintHordeTexture(){
- const surface=ensureHeatCanvas(),c=heatState.ctx,stamp=heatmapStamp();c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,surface.width,surface.height);
- if(heatState.cells.length){const scale=Math.sqrt(surface.width*surface.height/(W*H));c.save();c.globalCompositeOperation='lighter';
- for(const b of heatState.cells){const radius=Math.max(3.5,clamp(72+Math.sqrt(b.count)*16,78,260)*scale*heatState.glowScale),x=b.x/W*surface.width,y=b.y/H*surface.height;c.globalAlpha=Math.min(1,.68+Math.log2(b.count+1)*.13);c.drawImage(stamp,x-radius,y-radius,radius*2,radius*2)}
-  c.restore();}
+ const surface=ensureHeatCanvas(),c=heatState.ctx;c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,surface.width,surface.height);
+ const scale=Math.sqrt(surface.width*surface.height/(W*H)),paint=(cells,kind,base,spread,alpha)=>{if(!cells.length)return;const stamp=heatmapStamp(kind);c.save();c.globalCompositeOperation='lighter';
+  for(const b of cells){const radius=Math.max(3.5,clamp(base+Math.sqrt(b.count)*spread,base,kind==='civilian'?220:260)*scale*heatState.glowScale),x=b.x/W*surface.width,y=b.y/H*surface.height;c.globalAlpha=Math.min(1,alpha+Math.log2(b.count+1)*.11);c.drawImage(stamp,x-radius,y-radius,radius*2,radius*2)}c.restore()};
+ // Civilian density is painted first so an active red horde remains unmistakable.
+ paint(heatState.civilianCells,'civilian',54,10,.34);paint(heatState.cells,'zombie',72,16,.68);
  heatState.dirty=true;
 }
 function updateZombieHeatmap(now=performance.now()){
- if(!zombies.length){if(heatState.cells.length){heatState.cells=[];paintHordeTexture()}return heatState.cells}
+ if(!zombies.length&&!people.length){if(heatState.cells.length||heatState.civilianCells.length){heatState.cells=[];heatState.civilianCells=[];paintHordeTexture()}return heatState.cells}
  // Updating the world image at four frames per second keeps pinch/pan responsive.
  const glowScale=hordeGlowScale();
  if(now<heatState.until&&Math.abs(glowScale-heatState.glowScale)<.035)return heatState.cells;
  heatState.until=now+240;
  heatState.glowScale=glowScale;
- const cell=44,bins=new Map();
+ const cell=44,bins=new Map(),civilianBins=new Map();
  const stride=Math.max(1,Math.ceil(zombies.length/5500));
  for(let i=0;i<zombies.length;i+=stride){
   const z=zombies[i];if(!z.alive||z.incubate>0)continue;
@@ -2199,13 +2221,20 @@ function updateZombieHeatmap(now=performance.now()){
   let b=bins.get(key);if(!b){b={x:0,y:0,n:0};bins.set(key,b)}
   b.x+=z.x;b.y+=z.y;b.n++;
  }
+ const civilianStride=Math.max(1,Math.ceil(people.length/5500));
+ for(let i=0;i<people.length;i+=civilianStride){const p=people[i];if(!p.alive)continue;
+  const gx=Math.floor(p.x/cell),gy=Math.floor(p.y/cell),key=gx+','+gy;
+  let b=civilianBins.get(key);if(!b){b={x:0,y:0,n:0,weight:0};civilianBins.set(key,b)}
+  b.x+=p.x;b.y+=p.y;b.n++;b.weight+=(p.weight||1)*civilianStride;
+ }
  heatState.cells=Array.from(bins.values(),b=>({x:b.x/b.n,y:b.y/b.n,count:b.n*stride}));
+ heatState.civilianCells=Array.from(civilianBins.values(),b=>({x:b.x/b.n,y:b.y/b.n,count:b.weight}));
  heatState.cell=cell;
  paintHordeTexture();
  return heatState.cells;
 }
 function drawSoftwareGroundHeat(c){
- const cells=updateZombieHeatmap();if(!cells.length||!heatState.canvas)return;
+ const cells=updateZombieHeatmap();if((!cells.length&&!heatState.civilianCells.length)||!heatState.canvas)return;
  const f=cameraFocus(),cs=Math.cos(camera3D.yaw),sn=Math.sin(camera3D.yaw),st=Math.sin(camera3D.tilt),A=cs*cam.zoom,B=sn*st*cam.zoom,C=-sn*cam.zoom,D=cs*st*cam.zoom;
  c.save();c.globalAlpha=.82;c.setTransform(dpr*A,dpr*B,dpr*C,dpr*D,dpr*(cw/2-A*f.x-C*f.y),dpr*(ch/2-B*f.x-D*f.y));c.drawImage(heatState.canvas,0,0,W,H);c.restore();
 }
