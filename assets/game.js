@@ -2185,7 +2185,7 @@ function render3DRanges(){let count=0;
 let strategicRoofs=null; // compatibility with collapse event invalidation
 // Compact density texture shared by GPU and software renderers. The canvas is
 // one image for the entire world; it never replaces the 3D scene or models.
-const heatState={until:0,cells:[],civilianCells:[],cell:64,canvas:null,ctx:null,stamps:{},dirty:true,width:0,height:0,glowScale:1};
+const heatState={until:0,cells:[],civilianCells:[],cell:64,canvas:null,ctx:null,stamps:{},dirty:true,width:0,height:0,glowScale:1,hordeOpacity:1};
 function ensureHeatCanvas(){
  const wide=W>=H,base=isNYC()?deviceProfile.heatBase:Math.min(512,deviceProfile.heatBase),w=wide?base:Math.max(2,Math.round(base*W/H)),h=wide?Math.max(2,Math.round(base*H/W)):base;
  if(heatState.canvas&&heatState.width===w&&heatState.height===h)return heatState.canvas;
@@ -2193,26 +2193,30 @@ function ensureHeatCanvas(){
 }
 function heatmapStamp(kind='zombie'){if(heatState.stamps[kind])return heatState.stamps[kind];const stamp=document.createElement('canvas');stamp.width=128;stamp.height=128;
  const c=stamp.getContext('2d'),g=c.createRadialGradient(64,64,0,64,64,64);
- if(kind==='civilian'){g.addColorStop(0,'rgba(72,229,214,.78)');g.addColorStop(.20,'rgba(46,190,201,.55)');g.addColorStop(.50,'rgba(38,145,187,.27)');g.addColorStop(.78,'rgba(25,102,157,.08)');g.addColorStop(1,'rgba(10,70,130,0)')}
+ if(kind==='civilian'){g.addColorStop(0,'rgba(55,183,177,.44)');g.addColorStop(.20,'rgba(38,151,164,.30)');g.addColorStop(.50,'rgba(31,111,151,.14)');g.addColorStop(.78,'rgba(22,78,134,.04)');g.addColorStop(1,'rgba(10,70,130,0)')}
  else{g.addColorStop(0,'rgba(255,67,72,.98)');g.addColorStop(.18,'rgba(244,49,61,.78)');g.addColorStop(.48,'rgba(213,32,47,.42)');g.addColorStop(.76,'rgba(164,15,32,.13)');g.addColorStop(1,'rgba(128,0,20,0)')}
  c.fillStyle=g;c.fillRect(0,0,128,128);heatState.stamps[kind]=stamp;return stamp;
 }
 function hordeGlowScale(){return clamp(.72/Math.sqrt(Math.max(.05,cam.zoom)),.42,1.5)}
+// Horde density is strategic information at city scale, then gracefully gets
+// out of the way as individual infected become readable at street scale.
+function hordeGlowOpacity(){return clamp((.94-cam.zoom)/.48,0,1)}
 function paintHordeTexture(){
  const surface=ensureHeatCanvas(),c=heatState.ctx;c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,surface.width,surface.height);
  const scale=Math.sqrt(surface.width*surface.height/(W*H)),paint=(cells,kind,base,spread,alpha)=>{if(!cells.length)return;const stamp=heatmapStamp(kind);c.save();c.globalCompositeOperation='lighter';
-  for(const b of cells){const radius=Math.max(3.5,clamp(base+Math.sqrt(b.count)*spread,base,kind==='civilian'?220:260)*scale*heatState.glowScale),x=b.x/W*surface.width,y=b.y/H*surface.height;c.globalAlpha=Math.min(1,alpha+Math.log2(b.count+1)*.11);c.drawImage(stamp,x-radius,y-radius,radius*2,radius*2)}c.restore()};
+  for(const b of cells){const radius=Math.max(3.5,clamp(base+Math.sqrt(b.count)*spread,base,kind==='civilian'?220:260)*scale*heatState.glowScale),x=b.x/W*surface.width,y=b.y/H*surface.height;c.globalAlpha=alpha*Math.min(1,.62+Math.log2(b.count+1)*.10);c.drawImage(stamp,x-radius,y-radius,radius*2,radius*2)}c.restore()};
  // Civilian density is painted first so an active red horde remains unmistakable.
- paint(heatState.civilianCells,'civilian',54,10,.34);paint(heatState.cells,'zombie',72,16,.68);
+ paint(heatState.civilianCells,'civilian',54,10,.16);paint(heatState.cells,'zombie',72,16,.92*heatState.hordeOpacity);
  heatState.dirty=true;
 }
 function updateZombieHeatmap(now=performance.now()){
  if(!zombies.length&&!people.length){if(heatState.cells.length||heatState.civilianCells.length){heatState.cells=[];heatState.civilianCells=[];paintHordeTexture()}return heatState.cells}
  // Updating the world image at four frames per second keeps pinch/pan responsive.
- const glowScale=hordeGlowScale();
- if(now<heatState.until&&Math.abs(glowScale-heatState.glowScale)<.035)return heatState.cells;
+ const glowScale=hordeGlowScale(),hordeOpacity=hordeGlowOpacity();
+ if(now<heatState.until&&Math.abs(glowScale-heatState.glowScale)<.035&&Math.abs(hordeOpacity-heatState.hordeOpacity)<.04)return heatState.cells;
  heatState.until=now+240;
  heatState.glowScale=glowScale;
+ heatState.hordeOpacity=hordeOpacity;
  const cell=44,bins=new Map(),civilianBins=new Map();
  const stride=Math.max(1,Math.ceil(zombies.length/5500));
  for(let i=0;i<zombies.length;i+=stride){
