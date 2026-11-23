@@ -3,6 +3,13 @@
 // Everything is original and self-contained: terrain, characters, particles, game rules and UI.
 const $=id=>document.getElementById(id), canvas=$('gameCanvas'), ctx=canvas.getContext('2d'), mini=$('minimap'), mc=mini.getContext('2d');
 const TAU=Math.PI*2, BASE_X=[95,322,536,759,978,1205,1426,1658,1886,2119,2323],BASE_Y=[91,295,508,721,943,1165,1382,1526];
+// Rendering adapts to the device, while the simulation remains deterministic at
+// the same difficulty. Older phones spend fewer GPU/Canvas cycles on detail.
+const deviceProfile=(()=>{const memory=Number(navigator.deviceMemory)||4,cores=Number(navigator.hardwareConcurrency)||4,
+ touch=matchMedia?.('(pointer: coarse)').matches||navigator.maxTouchPoints>0,
+ constrained=memory<=2||cores<=2;
+ return{touch,constrained,visualScale:constrained ? .55 : touch ? .78 : 1,antialias:!constrained&&!touch,
+  frameGap:constrained?33:touch?16:0,heatBase:constrained?640:touch?768:1024};})();
 const MAPS={
  classic:{name:'Cityfall Classic',desc:'Original expanding city and river districts.',x:BASE_X,y:BASE_Y,seed:2109,dx:222,dy:220,park:.115},
  nyc:{name:'New York City · 1:1 Campaign',desc:'Approximately meter-scale NYC geography · Manhattan streets ~80m apart and avenues ~230m apart.',x:[],y:[],seed:71119,dx:132,dy:132,park:.075},
@@ -326,7 +333,7 @@ const survivalRatio=()=>initialPopulation>0?livingPopulation()/initialPopulation
 // Keep small losses visible instead of rounding 99.6% up to "100%".
 const survivalPercent=()=>{const raw=survivalRatio()*100;return raw>0&&raw<100?Math.min(99.99,Math.round(raw*100)/100):raw};
 let people=[],zombies=[],buildings=[],parks=[],lots=[],rivers=[],bridges=[],futureBridges=[],shells=[],defenses=[],zones=[],gates=[],walls=[],effects=[],tracers=[],flares=[],aircraft=[],parachutes=[],feed=[],toolId=null,selected=null,hotTip='',mouse={x:0,y:0,wx:0,wy:0,down:false,pan:false,px:0,py:0},drag=null,cam={x:470,y:210,zoom:.58},cw=800,ch=650,dpr=1;
-let simId=0,uiTick=0,miniTick=0,grainCanvas=null,staticMap=null,outbreak={x:1195,y:723},toastUntil=0,uiInspectedId=-1,soundEnabled=true,audio=null,arrivals=[],campaignCheckpoint=null;
+let simId=0,uiTick=0,miniTick=0,grainCanvas=null,staticMap=null,outbreak={x:1195,y:723},toastUntil=0,uiInspectedId=-1,uiSelectedAt=0,uiObjectivesMarkup='',soundEnabled=true,audio=null,arrivals=[],campaignCheckpoint=null;
 let keys=new Set(),unitId=1,enemyId=1,zeroTime=0,heroWave=0,spawnCooldowns={},populationCull=0,ambientClock=0,stereoNoise=0,civilianSliceTick=0,hordeClock=0,hordeCenters=[],soundNextGun=0,soundNextGrowl=0,noiseBuffer=null;
 // A moving civilian is a small cohort. The full population is tracked exactly
 // through each cohort's weight, avoiding 220,000 physics updates per frame.
@@ -762,7 +769,20 @@ function routeBetween(ax,ay,bx,by){
  push(bx,by);return route;
 }
 function eachNearby(grid,x,y,range,callback){const a=Math.floor((x-range)/CELL),b=Math.floor((x+range)/CELL),c=Math.floor((y-range)/CELL),d=Math.floor((y+range)/CELL);for(let gy=c;gy<=d;gy++)for(let gx=a;gx<=b;gx++){const bucket=grid.get(gx+gy*GRIDCOLS);if(bucket)for(const v of bucket)callback(v)}}
-function rebuildGrid(grid,items){grid.clear();for(const v of items){if(!v.alive)continue;const key=Math.floor(v.x/CELL)+Math.floor(v.y/CELL)*GRIDCOLS;let bucket=grid.get(key);if(!bucket){bucket=[];grid.set(key,bucket)}bucket.push(v)}}
+const aliveEntity=v=>v.alive;
+function rebuildGrid(grid,items,keep=aliveEntity){
+ // Reuse buckets from the prior frame instead of creating thousands of tiny
+ // arrays on every simulation slice. This substantially reduces GC pauses.
+ const keys=grid._activeKeys||(grid._activeKeys=[]);
+ for(let i=0;i<keys.length;i++){const bucket=grid.get(keys[i]);if(bucket)bucket.length=0}
+ let used=0;
+ for(const v of items){if(!keep(v))continue;const key=Math.floor(v.x/CELL)+Math.floor(v.y/CELL)*GRIDCOLS;let bucket=grid.get(key);if(!bucket){bucket=[];grid.set(key,bucket)}if(bucket.length===0)keys[used++]=key;bucket.push(v)}
+ keys.length=used;
+}
+const activeUnit=u=>u.alive!==false&&u.hp>0&&!u.departed;
+const activeBeacon=u=>u.type==='beacon'&&activeUnit(u);
+function compactInPlace(items,keep){let write=0;for(let read=0;read<items.length;read++){const item=items[read];if(keep(item))items[write++]=item}items.length=write}
+function ageTransient(items,dt){let write=0;for(let read=0;read<items.length;read++){const item=items[read];item.life-=dt;if(item.life>0)items[write++]=item}items.length=write}
 function collidesBuilding(x,y,pad=3){const bucket=buildingGrid.get(Math.floor(x/CELL)+Math.floor(y/CELL)*GRIDCOLS);if(!bucket)return false;for(const b of bucket)if(!b.collapsed&&manhattanBuildingContains(b,x,y,pad))return true;return false}
 function roadSafe(x,y){x=clamp(x,26,W-26);y=clamp(y,26,H-26);if(walkable(x,y,3))return{x,y};const nav=nearestNav(x,y);if(nav>=0)return{x:((nav%navCols)+.5)*NAV_STEP,y:(Math.floor(nav/navCols)+.5)*NAV_STEP};return{x:XROADS[0],y:YROADS[0]}}
 function zoneVertices(z){return Array.isArray(z.verts)&&z.verts.length>=3?z.verts:[{x:z.x,y:z.y},{x:z.x+z.w,y:z.y},{x:z.x+z.w,y:z.y+z.h},{x:z.x,y:z.y+z.h}]}
@@ -1185,7 +1205,7 @@ function chooseEscapeGate(p,z,threat){let choice=null,score=Infinity;
   if(s<score){score=s;choice=g}}
  return choice
 }
-function updateCivilians(dt){const stride=people.length>19000?6:people.length>14000?5:people.length>9500?4:people.length>6200?3:people.length>4200?2:1,
+function updateCivilians(dt){const stride=people.length>(deviceProfile.constrained?14500:19000)?6:people.length>(deviceProfile.constrained?10200:14000)?5:people.length>(deviceProfile.constrained?6800:9500)?4:people.length>(deviceProfile.constrained?4300:6200)?3:people.length>(deviceProfile.constrained?2800:4200)?2:1,
  offset=civilianSliceTick++%stride,breachedZones=new Set(gates.filter(g=>g.hp<=0).map(g=>g.zoneId));dt*=stride;
  for(let pi=offset;pi<people.length;pi+=stride){const p=people[pi];if(!p.alive)continue;
   if(p.sheltered){const z=p.safeZone;
@@ -1299,7 +1319,7 @@ function moveZombie(z,dt){let route=z.route||[],target=route[z.routeAt];if(!targ
  const previous={x:z.x,y:z.y};steerAgent(z,target,z.speed*1.06,dt,zombieGrid,'zombie',z.navKey);
  if(previous.x===z.x&&previous.y===z.y){const blocked=zoneBoundaryBlocked(previous,{x:previous.x+(target.x-previous.x)*.025,y:previous.y+(target.y-previous.y)*.025},'zombie');if(blocked)z.wallSiege=blocked.zone}}
 function updateZombies(dt){const gateSiege=new Map(),wallSiege=new Map(),activeCount=zombies.length;
- const stride=activeCount>2600?3:activeCount>900?2:1,offset=zombieSliceTick++%stride;
+ const stride=activeCount>(deviceProfile.constrained?1500:2600)?3:activeCount>(deviceProfile.constrained?560:900)?2:1,offset=zombieSliceTick++%stride;
  const originalDt=dt;dt*=stride;
  for(let zi=offset;zi<activeCount;zi+=stride){const z=zombies[zi];if(!z.alive)continue;z.flash=Math.max(0,z.flash-dt);if(z.incubate>0){z.incubate-=dt;continue}
  const current=insideSafe(z.x,z.y);
@@ -1428,7 +1448,7 @@ function updateDefenses(dt){for(const u of defenses){if(u.hp<=0||u.departed)cont
    if(contacts>0){u.hp=Math.max(0,u.hp-dt*Math.min(42,3.2+contacts*3.1));if(u.hp<=0){u.alive=false;effects.push({type:'smoke',x:u.x,y:u.y,r:4,max:15,life:.4,maxLife:.4});continue}}
  }
  if(u.cooldown>0)continue;let target=closestZombie(u.x,u.y,u.range*(1+.13*(u.level-1)));if(target){fireUnit(u,target);u.cooldown=u.rate/Math.pow(1.16,u.level-1)}else u.cooldown=.15
- }defenses=defenses.filter(u=>!u.departed&&(!u.recruited||u.hp>0))
+ }compactInPlace(defenses,u=>!u.departed&&(!u.recruited||u.hp>0))
 }
 function retireRoundUnits(){
  const old=defenses.length;defenses=defenses.filter(u=>!u.recruited&&!u.temporary&&!isRoundOnlyUnit(u.type));
@@ -1531,25 +1551,25 @@ function launchWave(auto=false){const sc=scenarioAt();if(spawnedWaves>=sc.waves.
  notify('SURGE '+spawnedWaves+'/'+sc.waves.length+' · '+fmt(count)+' infected · '+threatProfile.pressure.toFixed(2)+'× threat',true);
  if(p)effects.push({type:'ring',x:p.x,y:p.y,r:20,max:130,life:2.4,maxLife:2.4});effectSound('warning');
 }
-function tick(dt){time+=dt;const sc=scenarioAt();gateFlowTick(dt);if(wallGridDirty)rebuildWallGrid();humanSearchClock-=dt;if(humanSearchClock<=0){refreshHumanClusters();humanSearchClock=.82;}
+function tick(dt){time+=dt;const sc=scenarioAt();gateFlowTick(dt);if(wallGridDirty)rebuildWallGrid();humanSearchClock-=dt;if(humanSearchClock<=0){refreshHumanClusters();humanSearchClock=deviceProfile.constrained?1.12:.82;}
  // Idle means no active infected. After five quiet seconds, advance a pending
  // surge, even if its scheduled time is later. Active hordes use normal timing.
- const active=pendingSurges.length>0||zombies.some(z=>z.alive);quietClock=active?0:quietClock+dt;
+ const active=pendingSurges.length>0||zombies.length>0;quietClock=active?0:quietClock+dt;
  if(endlessMode){
   if(!pendingSurges.length&&(time>=endlessNextAt||quietClock>=5))launchEndlessWave(quietClock>=5);
  }else if(spawnedWaves<sc.waves.length&&(time>=sc.waves[spawnedWaves]||quietClock>=5))launchWave(quietClock>=5);
  advanceSurgeSpawns(dt);
  // Rebuild the short-range indices between stages to avoid O(people × zombies) scans.
- if(beaconGridDirty){rebuildGrid(beaconGrid,defenses.filter(u=>u.type==='beacon'&&u.hp>0));beaconGridDirty=false}rebuildGrid(zombieGrid,zombies);hordeClock-=dt;if(hordeClock<=0){hordeHotspots();hordeClock=.64}updateCivilians(dt);rebuildGrid(civGrid,people);updateZombies(dt);
+ if(beaconGridDirty){rebuildGrid(beaconGrid,defenses,activeBeacon);beaconGridDirty=false}rebuildGrid(zombieGrid,zombies);hordeClock-=dt;if(hordeClock<=0){hordeHotspots();hordeClock=deviceProfile.constrained ? .82 : .64}updateCivilians(dt);rebuildGrid(civGrid,people);updateZombies(dt);
  if(livingPopulation()===0){finish(false);return}
- rebuildGrid(zombieGrid,zombies);rebuildGrid(unitGrid,defenses.filter(u=>u.hp>0));updateDefenses(dt);updateGarrisons(dt);updateAircraft(dt);updateShells(dt);updateBuildingCollapses(dt);
- for(const e of effects)e.life-=dt;effects=effects.filter(e=>e.life>0);for(const e of tracers)e.life-=dt;tracers=tracers.filter(e=>e.life>0);zombies=zombies.filter(z=>z.alive);
+ rebuildGrid(zombieGrid,zombies);rebuildGrid(unitGrid,defenses,activeUnit);updateDefenses(dt);updateGarrisons(dt);updateAircraft(dt);updateShells(dt);updateBuildingCollapses(dt);
+ ageTransient(effects,dt);ageTransient(tracers,dt);compactInPlace(zombies,aliveEntity);
  populationCull+=dt;if(populationCull>1.4){people=people.filter(p=>p.alive);populationCull=0}
  if(endlessMode){
   if(zombies.length===0&&pendingSurges.length===0&&endlessWave>endlessAwardedWave)endlessWaveCleared();
  }else if(spawnedWaves===sc.waves.length&&zombies.length===0&&pendingSurges.length===0){zeroTime+=dt;if(zeroTime>2){finish(true);return}}else zeroTime=0;
 }
-function resize(){const b=canvas.getBoundingClientRect();cw=Math.max(2,b.width);ch=Math.max(2,b.height);dpr=Math.min(window.devicePixelRatio||1,window.innerWidth<900?1:1.5);canvas.width=Math.round(cw*dpr);canvas.height=Math.round(ch*dpr);canvas.style.width=cw+'px';canvas.style.height=ch+'px';mini.width=Math.round(mini.clientWidth*1.5)||315;mini.height=Math.round(mini.clientHeight*1.5)||215;clampCamera()}
+function resize(){const b=canvas.getBoundingClientRect();cw=Math.max(2,b.width);ch=Math.max(2,b.height);dpr=Math.min(window.devicePixelRatio||1,deviceProfile.constrained?1:window.innerWidth<900?1:1.5);canvas.width=Math.round(cw*dpr);canvas.height=Math.round(ch*dpr);canvas.style.width=cw+'px';canvas.style.height=ch+'px';const miniScale=deviceProfile.constrained?1:1.5;mini.width=Math.round(mini.clientWidth*miniScale)||315;mini.height=Math.round(mini.clientHeight*miniScale)||215;clampCamera()}
 function clampCamera(){const f=cameraFocus(),nx=clamp(f.x,-85,VIS_W+85),ny=clamp(f.y,-85,VIS_H+85);cam.x+=nx-f.x;cam.y+=ny-f.y}
 function centerCamera(x,y){cam.x=x-cw/(2*cam.zoom);cam.y=y-ch/(2*cam.zoom);clampCamera()}
 function screenToWorld(x,y){if(!world3D.ready)return{x:cam.x+x/cam.zoom,y:cam.y+y/cam.zoom};const cs=Math.cos(camera3D.yaw),sn=Math.sin(camera3D.yaw),rx=(x-cw/2)/cam.zoom,ry=(y-ch/2)/(cam.zoom*Math.sin(camera3D.tilt)),focus=cameraFocus();return{x:focus.x+rx*cs+ry*sn,y:focus.y-rx*sn+ry*cs}}
@@ -1625,9 +1645,10 @@ function markZoomMoving(){zoomPerf.movingUntil=performance.now()+330}
 function lowDetailView(){
  const moving=performance.now()<zoomPerf.movingUntil;
  const z=cam.zoom;
- if(moving&&z<.43)zoomPerf.lowDetail=true;
- else if(z<.20)zoomPerf.lowDetail=true;
- else if(z>.35)zoomPerf.lowDetail=false;
+ const movingEnter=deviceProfile.constrained ? .56 : .43,stillEnter=deviceProfile.constrained ? .28 : .20,exit=deviceProfile.constrained ? .42 : .35;
+ if(moving&&z<movingEnter)zoomPerf.lowDetail=true;
+ else if(z<stillEnter)zoomPerf.lowDetail=true;
+ else if(z>exit)zoomPerf.lowDetail=false;
  return zoomPerf.lowDetail;
 }
 
@@ -1645,8 +1666,8 @@ function rotate3DCamera(by=.35){camera3D.yaw+=by;if(camera3D.yaw>Math.PI)camera3
 class CityRenderer{
  constructor(){
   this.canvas=document.createElement('canvas');this.canvas.id='world3d';canvas.parentElement.insertBefore(this.canvas,canvas);
-  this.gl=this.canvas.getContext('webgl2',{alpha:false,antialias:true,preserveDrawingBuffer:false,depth:true,powerPreference:'high-performance'});
-  this.ready=false;this.staticData=null;this.staticCount=0;this.needsBuild=true;this.palette=new Map();this.dynamic=[];this.lodData=null;this.lodCount=0;this.softwareChunks=null;this.polyData=new Float32Array();this.polyCount=0;this.heatWorldW=0;this.heatWorldH=0;
+  this.gl=this.canvas.getContext('webgl2',{alpha:false,antialias:deviceProfile.antialias,preserveDrawingBuffer:false,depth:true,powerPreference:'high-performance'});
+  this.ready=false;this.staticData=null;this.staticCount=0;this.needsBuild=true;this.palette=new Map();this.dynamic=[];this.dynamicUpload=null;this.lodData=null;this.lodCount=0;this.softwareChunks=null;this.polyData=new Float32Array();this.polyCount=0;this.heatWorldW=0;this.heatWorldH=0;
   if(!this.gl){this.ctx2=this.canvas.getContext('2d');this.software=true;this.ready=true;return;}
   try{this.setup();this.ready=true}catch(e){console.error('WebGL3D setup failed; using projected 3D fallback',e);this.canvas.remove();this.canvas=document.createElement('canvas');this.canvas.id='world3d';canvas.parentElement.insertBefore(this.canvas,canvas);this.gl=null;this.ctx2=this.canvas.getContext('2d');this.software=true;this.ready=true;this.needsBuild=true}
  }
@@ -1908,7 +1929,7 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
    box(xx,yy,10.5,3.2,3.2,21,'#73e0cd');box(xx,yy,24,12,12,5,'#9ff8e2')
   }
  }
- drawDynamic(){const a=[],box=(...v)=>this.box(a,...v),focus=cameraFocus(),cs=Math.cos(camera3D.yaw),sn=Math.sin(camera3D.yaw),sx=cw/(2*Math.max(isNYC()?NYC_MIN_ZOOM:.16,cam.zoom))+170,sy=ch/(2*Math.max(isNYC()?NYC_MIN_ZOOM:.16,cam.zoom)*Math.sin(camera3D.tilt))+190;
+ drawDynamic(){const a=this.dynamic;a.length=0;const box=(...v)=>this.box(a,...v),focus=cameraFocus(),cs=Math.cos(camera3D.yaw),sn=Math.sin(camera3D.yaw),sx=cw/(2*Math.max(isNYC()?NYC_MIN_ZOOM:.16,cam.zoom))+170,sy=ch/(2*Math.max(isNYC()?NYC_MIN_ZOOM:.16,cam.zoom)*Math.sin(camera3D.tilt))+190;
   const inView=(x,y)=>{const dx=x-focus.x,dy=y-focus.y;return Math.abs(dx*cs-dy*sn)<sx&&Math.abs(dx*sn+dy*cs)<sy};
   if(nycFullCityPreview())for(const b of futureBridges){
    const dx=b.bx-b.ax,dy=b.by-b.ay,len=Math.hypot(dx,dy),angle=Math.atan2(dy,dx);
@@ -1936,13 +1957,13 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
    if(Math.abs(dx*cs-dy*sn)<sx+rad&&Math.abs(dx*sn+dy*cs)<sy+rad)this.makeZoneWalls(a,z)
   }
   for(const w of walls)if(w.hp>0&&inView((w.ax+w.bx)/2,(w.ay+w.by)/2)){this.addSegment(a,w.ax,w.ay,w.bx,w.by,5,10,6,w.hp/w.maxHp<.35?'#a36d5e':'#c5b07f');box(w.ax,w.ay,7,5.5,5.5,14,'#4b5c59');box(w.bx,w.by,7,5.5,5.5,14,'#4b5c59')}
-  const detail=cam.zoom>.46;
+  const detail=cam.zoom>(deviceProfile.constrained ? .64 : .46),visualScale=deviceProfile.visualScale;
   // At neighborhood zoom draw EVERY nearby moving cohort, not every Nth
   // cohort city-wide. Reuse the existing spatial index and a bounded cell
   // query so this is both denser and cheaper than scanning the full city.
-  const maxVisibleCivs=performance.now()<zoomPerf.movingUntil?Math.min(380,this.software?1000:4400):cam.zoom<.035?110:cam.zoom<.14?260:cam.zoom<.32?800:(this.software?1900:4400);
+  const maxVisibleCivs=Math.max(80,Math.round((performance.now()<zoomPerf.movingUntil?Math.min(380,this.software?1000:4400):cam.zoom<.035?110:cam.zoom<.14?260:cam.zoom<.32?800:(this.software?1900:4400))*visualScale));
   let visibleCivs=0,extraCivs=0;
-  const extraCap=cam.zoom<.32?0:(this.software?450:1100);
+  const extraCap=cam.zoom<.32?0:Math.round((this.software?450:1100)*visualScale);
   const showCivilian=(p)=>{
    if(visibleCivs>=maxVisibleCivs||!p.alive||!inView(p.x,p.y))return;
    const color=civilianShirtColor(p);visibleCivs++;
@@ -1997,7 +2018,7 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
     if(detail&&i%2===0)box(x,y,7.5,2.6,2.6,3,'#e5cdb2')
    }
   }
-  const zombieCap=performance.now()<zoomPerf.movingUntil?220:cam.zoom<.035?130:cam.zoom<.14?360:cam.zoom<.32?850:(this.software?1150:2600);
+  const zombieCap=Math.max(70,Math.round((performance.now()<zoomPerf.movingUntil?220:cam.zoom<.035?130:cam.zoom<.14?360:cam.zoom<.32?850:(this.software?1150:2600))*visualScale));
   const zombieVisualStride=Math.max(1,Math.ceil(zombies.length/zombieCap));
   for(let zi=0;zi<zombies.length;zi+=zombieVisualStride){const z=zombies[zi];if(!z.alive||!inView(z.x,z.y))continue;const c=z.flash>0?'#fff0c9':'#c84d54';
    box(z.x,z.y,3.7,4.3,4.3,7.3,c);if(detail)box(z.x,z.y,9.0,4.5,4.3,3.3,'#de786a')}
@@ -2093,6 +2114,10 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
 
  bindInstances(buffer,instanceOffset=0){const gl=this.gl;gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   for(const [loc,n,off] of [[2,3,0],[3,3,12],[4,3,24],[5,1,36]]){gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,n,gl.FLOAT,false,40,off+instanceOffset*40);gl.vertexAttribDivisor(loc,1)}}
+ uploadDynamic(data){const gl=this.gl,needed=data.length;
+  if(!this.dynamicUpload||this.dynamicUpload.length<needed){const capacity=Math.max(1024,2**Math.ceil(Math.log2(needed)));this.dynamicUpload=new Float32Array(capacity);gl.bindBuffer(gl.ARRAY_BUFFER,this.dynamicBuffer);gl.bufferData(gl.ARRAY_BUFFER,capacity*4,gl.DYNAMIC_DRAW)}
+  this.dynamicUpload.set(data,0);gl.bindBuffer(gl.ARRAY_BUFFER,this.dynamicBuffer);gl.bufferSubData(gl.ARRAY_BUFFER,0,this.dynamicUpload,0,needed);return needed/10;
+ }
  syncHeatPlane(){if(this.heatWorldW===W&&this.heatWorldH===H)return;const gl=this.gl;this.heatWorldW=W;this.heatWorldH=H;
   gl.bindBuffer(gl.ARRAY_BUFFER,this.heatPlaneBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([0,0,0,0,W,0,1,0,W,H,1,1,0,0,0,0,W,H,1,1,0,H,0,1]),gl.STATIC_DRAW)}
  renderHeatPlane(uniforms){const heat=updateZombieHeatmap();if(!heat.length||!heatState.canvas)return;const gl=this.gl;this.syncHeatPlane();
@@ -2114,7 +2139,7 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
   else {this.bindInstances(this.staticBuffer,this.sceneGroundCount);gl.drawArraysInstanced(gl.TRIANGLES,0,36,this.staticCount-this.sceneGroundCount)}
   if(this.polyCount){gl.useProgram(this.polyProgram);gl.bindVertexArray(this.polyVao);uniforms(this.polyUniforms);
    gl.drawArrays(gl.TRIANGLES,0,this.polyCount);gl.useProgram(this.program);gl.bindVertexArray(this.vao);uniforms(this.uniforms)}
-  const data=this.drawDynamic();if(data.length){gl.bindBuffer(gl.ARRAY_BUFFER,this.dynamicBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);this.bindInstances(this.dynamicBuffer);gl.drawArraysInstanced(gl.TRIANGLES,0,36,data.length/10)}
+  const data=this.drawDynamic();if(data.length){const count=this.uploadDynamic(data);this.bindInstances(this.dynamicBuffer);gl.drawArraysInstanced(gl.TRIANGLES,0,36,count)}
  }}
 const world3D=new CityRenderer();
 // World-space weapon ranges, projected onto the actual 3D ground plane rather
@@ -2140,9 +2165,9 @@ function render3DRanges(){let count=0;
 let strategicRoofs=null; // compatibility with collapse event invalidation
 // Compact density texture shared by GPU and software renderers. The canvas is
 // one image for the entire world; it never replaces the 3D scene or models.
-const heatState={until:0,cells:[],cell:64,canvas:null,ctx:null,stamp:null,dirty:true,width:0,height:0};
+const heatState={until:0,cells:[],cell:64,canvas:null,ctx:null,stamp:null,dirty:true,width:0,height:0,glowScale:1};
 function ensureHeatCanvas(){
- const wide=W>=H,base=isNYC()?1024:512,w=wide?base:Math.max(2,Math.round(base*W/H)),h=wide?Math.max(2,Math.round(base*H/W)):base;
+ const wide=W>=H,base=isNYC()?deviceProfile.heatBase:Math.min(512,deviceProfile.heatBase),w=wide?base:Math.max(2,Math.round(base*W/H)),h=wide?Math.max(2,Math.round(base*H/W)):base;
  if(heatState.canvas&&heatState.width===w&&heatState.height===h)return heatState.canvas;
  heatState.canvas=document.createElement('canvas');heatState.canvas.width=w;heatState.canvas.height=h;heatState.ctx=heatState.canvas.getContext('2d');heatState.width=w;heatState.height=h;heatState.dirty=true;return heatState.canvas;
 }
@@ -2151,18 +2176,21 @@ function heatmapStamp(){if(heatState.stamp)return heatState.stamp;const stamp=do
  g.addColorStop(0,'rgba(255,67,72,.98)');g.addColorStop(.18,'rgba(244,49,61,.78)');g.addColorStop(.48,'rgba(213,32,47,.42)');g.addColorStop(.76,'rgba(164,15,32,.13)');g.addColorStop(1,'rgba(128,0,20,0)');
  c.fillStyle=g;c.fillRect(0,0,128,128);heatState.stamp=stamp;return stamp;
 }
+function hordeGlowScale(){return clamp(.72/Math.sqrt(Math.max(.05,cam.zoom)),.42,1.5)}
 function paintHordeTexture(){
  const surface=ensureHeatCanvas(),c=heatState.ctx,stamp=heatmapStamp();c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,surface.width,surface.height);
  if(heatState.cells.length){const scale=Math.sqrt(surface.width*surface.height/(W*H));c.save();c.globalCompositeOperation='lighter';
- for(const b of heatState.cells){const radius=Math.max(8,clamp(72+Math.sqrt(b.count)*16,78,260)*scale),x=b.x/W*surface.width,y=b.y/H*surface.height;c.globalAlpha=Math.min(1,.68+Math.log2(b.count+1)*.13);c.drawImage(stamp,x-radius,y-radius,radius*2,radius*2)}
+ for(const b of heatState.cells){const radius=Math.max(3.5,clamp(72+Math.sqrt(b.count)*16,78,260)*scale*heatState.glowScale),x=b.x/W*surface.width,y=b.y/H*surface.height;c.globalAlpha=Math.min(1,.68+Math.log2(b.count+1)*.13);c.drawImage(stamp,x-radius,y-radius,radius*2,radius*2)}
   c.restore();}
  heatState.dirty=true;
 }
 function updateZombieHeatmap(now=performance.now()){
  if(!zombies.length){if(heatState.cells.length){heatState.cells=[];paintHordeTexture()}return heatState.cells}
  // Updating the world image at four frames per second keeps pinch/pan responsive.
- if(now<heatState.until)return heatState.cells;
+ const glowScale=hordeGlowScale();
+ if(now<heatState.until&&Math.abs(glowScale-heatState.glowScale)<.035)return heatState.cells;
  heatState.until=now+240;
+ heatState.glowScale=glowScale;
  const cell=44,bins=new Map();
  const stride=Math.max(1,Math.ceil(zombies.length/5500));
  for(let i=0;i<zombies.length;i+=stride){
@@ -2243,7 +2271,8 @@ function snapZone(r){
  return{x:x1,y:y1,w:x2-x1,h:y2-y1}
 }
 function minimap(){if(!mc||mini.width<4)return;const w=mini.width,h=mini.height;mc.clearRect(0,0,w,h);mc.drawImage(staticMap,0,0,staticMap.width,staticMap.height,0,0,w,h);mc.fillStyle='#80e1d455';for(const z of zones){if(z.hp>0){mc.beginPath();const v=zoneVertices(z);mc.moveTo(v[0].x/VIS_W*w,v[0].y/VIS_H*h);for(const p of v.slice(1))mc.lineTo(p.x/VIS_W*w,p.y/VIS_H*h);mc.closePath();mc.fill()}}
- mc.fillStyle='#e3e8d1';for(let i=0;i<people.length;i+=(people.length>4000?8:3)){const p=people[i];if(!p.alive)continue;mc.fillRect(p.x/VIS_W*w,p.y/VIS_H*h,1.3,1.3)}mc.fillStyle='#e27372';for(const z of zombies)mc.fillRect(z.x/VIS_W*w-1,z.y/VIS_H*h-1,2.3,2.3);mc.strokeStyle='#f4fef8';mc.lineWidth=1.8;mc.strokeRect(cam.x/VIS_W*w,cam.y/VIS_H*h,cw/cam.zoom/VIS_W*w,ch/cam.zoom/VIS_H*h)}
+ const peopleStride=people.length>4000?(deviceProfile.constrained?14:8):3,zombieStride=Math.max(1,Math.ceil(zombies.length/(deviceProfile.constrained?280:650)));
+ mc.fillStyle='#e3e8d1';for(let i=0;i<people.length;i+=peopleStride){const p=people[i];if(!p.alive)continue;mc.fillRect(p.x/VIS_W*w,p.y/VIS_H*h,1.3,1.3)}mc.fillStyle='#e27372';for(let i=0;i<zombies.length;i+=zombieStride){const z=zombies[i];if(z.alive)mc.fillRect(z.x/VIS_W*w-1,z.y/VIS_H*h-1,2.3,2.3)}mc.strokeStyle='#f4fef8';mc.lineWidth=1.8;mc.strokeRect(cam.x/VIS_W*w,cam.y/VIS_H*h,cw/cam.zoom/VIS_W*w,ch/cam.zoom/VIS_H*h)}
 function renderUI(force=false){const aliveCount=livingPopulation(),total=initialPopulation;let pct=survivalPercent(),safeIntegrity=zones.length?Math.round(zones.reduce((a,z)=>a+Math.max(0,z.hp),0)/zones.reduce((a,z)=>a+z.maxHp,0)*100):100;
  $('threatBaselineLabel').textContent=endlessMode?'Endless baseline':'Campaign baseline';$('campaignThreatValue').textContent=(campaignThreat.carry+(endlessMode?endlessPressure:0)).toFixed(2)+'×';$('threatValue').textContent=threatProfile.pressure.toFixed(2)+'×';$('threatBar').style.width=Math.min(100,(threatProfile.pressure-1)*58)+'%';
  const waveNext=scenarioAt().waves[spawnedWaves];
@@ -2251,9 +2280,10 @@ function renderUI(force=false){const aliveCount=livingPopulation(),total=initial
  const forecast=threatDirector();$('waveDetail').textContent=phase==='lost'?'No civilians survived. Restore from the most recent checkpoint.':endlessMode?'∞ WAVE '+endlessWave+' · RECORD '+endlessBest+' · rising pressure '+forecast.pressure.toFixed(2)+'×. Simultaneous zombie cap '+fmt(ENDLESS_ACTIVE_LIMIT)+'. Five quiet seconds triggers the next wave.':spawnedWaves===scenarioAt().waves.length?'Final surge underway. Clear every infected to win.':'CAMPAIGN '+campaignThreat.carry.toFixed(2)+'× · NEXT: '+Math.round(forecast.count*100)+'% horde size · '+Math.round(forecast.speed*100)+'% speed · '+Math.round(forecast.siege*100)+'% gate pressure. 5 quiet seconds skips the wait.';
  $('money').textContent='$'+fmt(budget);$('alive').textContent=fmt(aliveCount);$('infected').textContent=fmt(zombies.length);$('saved').textContent=fmt(aliveCount)+' / '+fmt(initialPopulation);$('timer').textContent=ftime(time);$('savedPct').textContent=pct+'%';$('saveBar').style.width=pct+'%';$('integrityPct').textContent=safeIntegrity+'%';$('integrityBar').style.width=safeIntegrity+'%';$('sitrep').textContent=phase==='planning'?'Origin hidden. Snap shelters to the grid; gates only work alongside roads.':phase==='live'?(endlessMode?'Endless Wave '+endlessWave+'. Protect the '+fmt(aliveCount)+' survivors.':'Emergency response active. '+fmt(lost)+' civilians have been infected.'):phase==='paused'?'Operations temporarily paused.':phase==='lost'?'NO SURVIVORS — district lost.':'Scenario completed.';
  const enough=aliveCount>0,endwaves=spawnedWaves===scenarioAt().waves.length;
- $('objectives').innerHTML='<div class="objective '+(zones.length?'done':'')+'"><span class="check">'+(zones.length?'✓':'·')+'</span>Establish a walled safe zone<strong>'+zones.length+'</strong></div><div class="objective '+(enough?'done':'')+'"><span class="check">'+(enough?'✓':'·')+'</span>Survivors remaining<strong>'+fmt(aliveCount)+'/'+fmt(initialPopulation)+'</strong></div><div class="objective '+(rescued>0?'done':'')+'"><span class="check">'+(rescued>0?'✓':'·')+'</span>Currently sheltered<strong>'+fmt(rescued)+'</strong></div><div class="objective '+(endwaves&&zombies.length===0&&!queuedZombies()?'done':'')+'"><span class="check">'+(endlessMode?'∞':endwaves&&zombies.length===0&&!queuedZombies()?'✓':'·')+'</span>'+(endlessMode?'Survive endless waves':'Neutralize EVERY infected after ALL waves')+'<strong>'+fmt(zombies.length)+(queuedZombies()?' + '+fmt(queuedZombies())+' incoming':'')+' · '+(endlessMode?'∞ '+endlessWave+' waves':spawnedWaves+'/'+scenarioAt().waves.length+' waves')+'</strong></div>';
+ const queued=queuedZombies(),objectiveMarkup='<div class="objective '+(zones.length?'done':'')+'"><span class="check">'+(zones.length?'✓':'·')+'</span>Establish a walled safe zone<strong>'+zones.length+'</strong></div><div class="objective '+(enough?'done':'')+'"><span class="check">'+(enough?'✓':'·')+'</span>Survivors remaining<strong>'+fmt(aliveCount)+'/'+fmt(initialPopulation)+'</strong></div><div class="objective '+(rescued>0?'done':'')+'"><span class="check">'+(rescued>0?'✓':'·')+'</span>Currently sheltered<strong>'+fmt(rescued)+'</strong></div><div class="objective '+(endwaves&&zombies.length===0&&!queued?'done':'')+'"><span class="check">'+(endlessMode?'∞':endwaves&&zombies.length===0&&!queued?'✓':'·')+'</span>'+(endlessMode?'Survive endless waves':'Neutralize EVERY infected after ALL waves')+'<strong>'+fmt(zombies.length)+(queued?' + '+fmt(queued)+' incoming':'')+' · '+(endlessMode?'∞ '+endlessWave+' waves':spawnedWaves+'/'+scenarioAt().waves.length+' waves')+'</strong></div>';
+ if(force||objectiveMarkup!==uiObjectivesMarkup){$('objectives').innerHTML=objectiveMarkup;uiObjectivesMarkup=objectiveMarkup}
  updateToolUi();$('coords').textContent='CAM '+Math.round(cam.x)+' / '+Math.round(cam.y)+' · ZOOM '+Math.round(cam.zoom*100)+'% · '+fmt(people.length)+' moving civilian groups';
- if(force||selected?.id!==uiInspectedId||(phase==='live'&&selected)){uiInspectedId=selected?.id||-1;renderSelected()}
+ const now=performance.now();if(force||selected?.id!==uiInspectedId||(phase==='live'&&selected&&now-uiSelectedAt>750)){uiInspectedId=selected?.id||-1;uiSelectedAt=now;renderSelected()}
 }
 function renderSelected(){const target=$('unitInspector');if(!selected){target.innerHTML='<div class="micro">Select a unit, shelter or gate to inspect performance. Select gates to reinforce their health, or garrisons to upgrade soldier recruitment.</div>';return}
  let u=selected,valid=u.type==='zone'?zones.includes(u):u.type==='gate'?gates.includes(u):u.type==='wall'?walls.includes(u):u.type==='bridge'?bridges.includes(u):defenses.includes(u);if(!valid){selected=null;renderSelected();return}
@@ -2384,7 +2414,7 @@ async function restoreFull(d){$('reviewControls').classList.add('hidden');if(!d|
    for(const b of futureCityBuildings)if(!known.has(b.key))buildings.push(b);
  }
  campaignCheckpoint=d.checkpoint||d.layout;prevPhase=d.prevPhase||'live';showRanges=d.showRanges!==false;soundEnabled=d.soundEnabled!==false;Object.assign(cam,d.cam||{});Object.assign(camera3D,d.camera3D||{});if(Math.abs(camera3D.tilt-0.85)<0.012)camera3D.tilt=1.32;
- rebuildBuildingGrid();rebuildWallGrid();refreshNavigation();rebuildGrid(civGrid,people);rebuildGrid(zombieGrid,zombies);rebuildGrid(unitGrid,defenses.filter(u=>u.hp>0));beaconGridDirty=true;hordeHotspots();refreshHumanClusters();world3D.needsBuild=true;selected=null;toolId=null;drag=null;
+ rebuildBuildingGrid();rebuildWallGrid();refreshNavigation();rebuildGrid(civGrid,people);rebuildGrid(zombieGrid,zombies);rebuildGrid(unitGrid,defenses,activeUnit);beaconGridDirty=true;hordeHotspots();refreshHumanClusters();world3D.needsBuild=true;selected=null;toolId=null;drag=null;
  const savedPhase=d.phase;phase=savedPhase==='planning'?'planning':'paused';
  if(savedPhase!=='planning'){$('startBtn').style.display='none';$('pauseBtn').style.display='';$('phaseLabel').textContent=endlessMode?'ENDLESS SURVIVAL — PAUSED':'OUTBREAK ACTIVE — PAUSED';$('phaseDot').style.background='#e68d88';$('mapTip').textContent='Saved operation restored. Resume whenever ready.';$('mapTip').classList.add('warn')}
  if(endlessMode)$('levelChip').textContent='∞ ENDLESS · WAVE '+endlessWave;
@@ -2433,6 +2463,6 @@ document.querySelectorAll('[data-speed]').forEach(b=>b.addEventListener('click',
 let previous=performance.now(),elapsedUI=0,elapsedMini=0,lastWorldRender=0;
 function frame(now){let dt=clamp((now-previous)/1000,0,.075);previous=now;detourBudget=Math.min(24,detourBudget+dt*42);const pan=(activeMap==='nyc'?640:510)*dt/cam.zoom;if(keys.has('a')||keys.has('arrowleft'))cam.x-=pan;if(keys.has('d')||keys.has('arrowright'))cam.x+=pan;if(keys.has('w')||keys.has('arrowup'))cam.y-=pan;if(keys.has('s')||keys.has('arrowdown'))cam.y+=pan;clampCamera();if(phase==='live'&&$('introOverlay').classList.contains('hidden')&&$('slotsOverlay').classList.contains('hidden')){const scaled=dt*speed,steps=Math.max(1,Math.ceil(scaled/.065));for(let i=0;i<steps;i++){if(phase!=='live')break;tick(scaled/steps)}}
  ambientClock+=dt;if(ambientClock>1.05){ambientClock=0;ambientSound()}const movingZoom=performance.now()<zoomPerf.movingUntil;
- const minFrameGap=movingZoom?(cam.zoom<.32?90:60):cam.zoom<.035?95:cam.zoom<.15?60:cam.zoom<.32?34:0;if(!loadingBusy&&$('introOverlay').classList.contains('hidden')&&now-lastWorldRender>=minFrameGap){drawCanvas();lastWorldRender=now}elapsedUI+=dt;elapsedMini+=dt;if(!loadingBusy&&elapsedUI>.22){renderUI(false);elapsedUI=0}if(!loadingBusy&&elapsedMini>.38&&staticMap){minimap();elapsedMini=0}if(toastUntil&&now>toastUntil){$('toast').classList.remove('show');toastUntil=0}requestAnimationFrame(frame)}
+ const sceneGap=movingZoom?(cam.zoom<.32?90:60):cam.zoom<.035?95:cam.zoom<.15?60:cam.zoom<.32?34:0,minFrameGap=Math.max(sceneGap,deviceProfile.frameGap);if(!loadingBusy&&$('introOverlay').classList.contains('hidden')&&now-lastWorldRender>=minFrameGap){drawCanvas();lastWorldRender=now}elapsedUI+=dt;elapsedMini+=dt;if(!loadingBusy&&elapsedUI>.22){renderUI(false);elapsedUI=0}if(!loadingBusy&&elapsedMini>(deviceProfile.constrained ? .58 : .38)&&staticMap){minimap();elapsedMini=0}if(toastUntil&&now>toastUntil){$('toast').classList.remove('show');toastUntil=0}requestAnimationFrame(frame)}
 window.addEventListener('resize',resize);resize();$('introOverlay').classList.remove('hidden');$('continueBtn').style.display=readSave()?'':'none';$('continueEndlessBtn').style.display=readEndlessCheckpoint()?'':'none';requestAnimationFrame(frame);
 })();
