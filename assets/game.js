@@ -2142,7 +2142,9 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
   gl.bindBuffer(gl.ARRAY_BUFFER,this.heatPlaneBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([0,0,0,0,W,0,1,0,W,H,1,1,0,0,0,0,W,H,1,1,0,H,0,1]),gl.STATIC_DRAW)}
  renderHeatPlane(uniforms){const heat=updateZombieHeatmap();if((!heat.length&&!heatState.civilianCells.length)||!heatState.canvas)return;const gl=this.gl;this.syncHeatPlane();
   gl.useProgram(this.heatProgram);gl.bindVertexArray(this.heatPlaneVao);uniforms(this.heatUniforms);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.heatTexture);gl.uniform1i(this.heatUniforms.heat,0);
-  if(heatState.dirty){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,heatState.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);heatState.dirty=false}
+  // Canvas and world coordinates both increase downward.  Do not flip the
+  // texture on upload or the shared civilian/zombie density image mirrors.
+  if(heatState.dirty){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,heatState.canvas);heatState.dirty=false}
   gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArrays(gl.TRIANGLES,0,6);gl.depthMask(true);gl.disable(gl.BLEND);gl.useProgram(this.program);gl.bindVertexArray(this.vao);uniforms(this.uniforms)}
  renderReferenceMap(uniforms){if(activeMap!=='nyc'||!nycReferenceMap.ready||!nycReferenceMap.canvas)return;const gl=this.gl;this.syncHeatPlane();gl.useProgram(this.mapProgram);gl.bindVertexArray(this.heatPlaneVao);uniforms(this.mapUniforms);gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,this.mapTexture);gl.uniform1i(this.mapUniforms.map,1);
   if(nycReferenceMap.dirty){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,nycReferenceMap.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);nycReferenceMap.dirty=false}gl.drawArrays(gl.TRIANGLES,0,6);gl.useProgram(this.program);gl.bindVertexArray(this.vao);uniforms(this.uniforms)}
