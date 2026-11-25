@@ -131,10 +131,10 @@ function nycSkylineLevels(x,y,random=.5){
  for(const [lon,lat,peak,radius] of NYC_SKYLINE_HUBS){const p=nycProject(lon,lat),r=radius*nycScale(),d=Math.hypot(x-p.x,y-p.y);if(d>=r)continue;levels=Math.max(levels,Math.round(peak*Math.pow(1-d/r,2.2)+random*3));}
  return Math.max(1,levels);
 }
-// The official NYC basemap is image-tiled and loaded only for the current NYC
-// campaign. Its CC-BY source is documented in README; offline play falls back
-// to the existing procedural map without delaying a stage.
-const NYC_TILE_ZOOM=11,NYC_TILE_URL='https://maps.nyc.gov/xyz/1.0.0/carto/basemap/{z}/{x}/{y}.jpg';
+// A live OpenStreetMap reference layer gives the NYC campaign real roads and
+// building footprints. Offline or unavailable tiles fall back to the bundled
+// procedural terrain without delaying a stage; attribution is visible in-map.
+const NYC_TILE_ZOOM=11,NYC_TILE_URL='https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const nycReferenceMap={canvas:null,ready:false,loading:false,dirty:false,generation:0};
 const nycTileX=(lon,z)=>Math.floor((lon+180)/360*(1<<z));
 const nycTileY=(lat,z)=>Math.floor((1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*(1<<z));

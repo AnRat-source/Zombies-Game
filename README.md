@@ -22,7 +22,7 @@ For local previews: `python -m http.server 8000` in this folder, then visit `htt
 
 ## New York reference map
 
-The current New York campaign asynchronously loads the City of New York's public **carto basemap** tiles for the ground layer. This adds the city's official street and planimetric-building cartography while keeping the game playable offline: failed or unavailable tile requests fall back to the bundled procedural terrain. The tile service is published by NYC and licensed CC BY 4.0; see the [NYC Map Tiles service](https://maps.nyc.gov/tiles/).
+The current New York campaign asynchronously loads the standard **OpenStreetMap** tile layer for ground reference. This adds current streets and building footprints while keeping the game playable offline: failed or unavailable tile requests fall back to the bundled procedural terrain. The map displays the required [© OpenStreetMap contributors attribution](https://www.openstreetmap.org/copyright); production deployments should use a tile provider appropriate to their expected traffic.
 
 3D structures remain optimized game geometry. High-rise density is concentrated around Lower Manhattan, Midtown, Hudson Yards, Downtown Brooklyn, and Long Island City, but individual extrusions are not yet an import of the official building-footprint/height data.
 
