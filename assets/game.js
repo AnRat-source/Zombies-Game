@@ -24,7 +24,7 @@ const MAPS={
 // The compact polygons below are intentionally simplified geographic approximations,
 // not official parcel-level shorelines or street/building datasets.
 const NYC_BOUNDS={west:-74.257159,east:-73.699215,north:40.915568,south:40.496010};
-const NYC_DIM=6900, NYC_PAD=170, NYC_EXPANSION=3.2, NYC_REAL_SCALE=7.1, NYC_MIN_ZOOM=.0018;
+const NYC_DIM=6900, NYC_PAD=170, NYC_EXPANSION=3.2, NYC_REAL_SCALE=7.1, NYC_MIN_ZOOM=.00008;
 const nycScale=()=>activeMap==='nyc'?NYC_REAL_SCALE:activeMap==='nyc_megascale'?NYC_EXPANSION:activeMap==='nyc_expanded'?1.6:1;
 const isNYC=()=>['nyc','nyc_megascale','nyc_expanded','nyc_standard'].includes(activeMap);
 // Geography is scaled uniformly, so the saved 1.6x city is never silently moved.
@@ -144,11 +144,12 @@ function loadNYCTile(url){return new Promise((resolve,reject)=>{const image=new 
 function loadNYCReferenceMap(){
  if(activeMap!=='nyc')return;const generation=simId;if(nycReferenceMap.loading&&nycReferenceMap.generation===generation)return;nycReferenceMap.loading=true;nycReferenceMap.ready=false;nycReferenceMap.generation=generation;const z=NYC_TILE_ZOOM;
  const minX=nycTileX(NYC_BOUNDS.west,z),maxX=nycTileX(NYC_BOUNDS.east,z),minY=nycTileY(NYC_BOUNDS.north,z),maxY=nycTileY(NYC_BOUNDS.south,z),surface=document.createElement('canvas');surface.width=1024;surface.height=1024;const c=surface.getContext('2d');
+ c.fillStyle='#78909a';c.fillRect(0,0,surface.width,surface.height);
  const jobs=[];for(let ty=minY;ty<=maxY;ty++)for(let tx=minX;tx<=maxX;tx++){const url=NYC_TILE_URL.replace('{z}',z).replace('{x}',tx).replace('{y}',ty);jobs.push(loadNYCTile(url).then(image=>({image,tx,ty})))}
- Promise.all(jobs).then(tiles=>{if(generation!==simId||activeMap!=='nyc')return;
-  for(const {image,tx,ty} of tiles){const a=nycProject(nycTileLon(tx,z),nycTileLat(ty,z)),b=nycProject(nycTileLon(tx+1,z),nycTileLat(ty+1,z));c.drawImage(image,a.x/W*surface.width,a.y/H*surface.height,(b.x-a.x)/W*surface.width,(b.y-a.y)/H*surface.height)}
-  nycReferenceMap.canvas=surface;nycReferenceMap.ready=true;nycReferenceMap.dirty=true;nycReferenceMap.generation=generation;if(window.CityfallPolygonMesh&&world3D?.ready)world3D.needsBuild=true;
- }).catch(()=>{if(generation===simId)nycReferenceMap.canvas=null}).finally(()=>{if(generation===nycReferenceMap.generation)nycReferenceMap.loading=false});
+ Promise.allSettled(jobs).then(results=>{if(generation!==simId||activeMap!=='nyc')return;
+  let loaded=0;for(const result of results){if(result.status!=='fulfilled')continue;const {image,tx,ty}=result.value,a=nycProject(nycTileLon(tx,z),nycTileLat(ty,z)),b=nycProject(nycTileLon(tx+1,z),nycTileLat(ty+1,z));c.drawImage(image,a.x/W*surface.width,a.y/H*surface.height,(b.x-a.x)/W*surface.width,(b.y-a.y)/H*surface.height);loaded++}
+  if(!loaded)return;nycReferenceMap.canvas=surface;nycReferenceMap.ready=true;nycReferenceMap.dirty=true;nycReferenceMap.generation=generation;if(window.CityfallPolygonMesh&&world3D?.ready)world3D.needsBuild=true;
+ }).finally(()=>{if(generation===nycReferenceMap.generation)nycReferenceMap.loading=false});
 }
 const NYC_PARKS=[[-73.967,40.784,195],[-73.972,40.776,140],[-73.969,40.661,130],[-73.852,40.747,125],[-73.875,40.860,125]];
 const NYC_CROSSINGS=[
@@ -267,16 +268,18 @@ function sizeForStage(sc){if(isNYC()){
  const m=MAPS[activeMap];NAV_STEP=14;XROADS=m.x.slice();YROADS=m.y.slice();for(let i=0;i<sc.extendX;i++)XROADS.push(m.x.at(-1)+(i+1)*m.dx);for(let i=0;i<sc.extendY;i++)YROADS.push(m.y.at(-1)+(i+1)*m.dy);W=XROADS.at(-1)+77;H=YROADS.at(-1)+34;GRIDCOLS=Math.ceil(W/CELL)+4;VIS_XROADS=XROADS.slice();VIS_YROADS=YROADS.slice();const last=scenarios.at(-1);for(let i=sc.extendX;i<last.extendX;i++)VIS_XROADS.push(m.x.at(-1)+(i+1)*m.dx);for(let i=sc.extendY;i<last.extendY;i++)VIS_YROADS.push(m.y.at(-1)+(i+1)*m.dy);VIS_W=VIS_XROADS.at(-1)+77;VIS_H=VIS_YROADS.at(-1)+34}
 const tools=[
  {id:'garrison',name:'Garrison',key:'1',price:215,desc:'Barracks · recruits mobile soldiers over time',range:0,damage:0,rate:0,color:'#89daca',health:175,live:true},
- {id:'sniper',name:'Lookout',key:'2',price:100,desc:'Long-range watcher',range:340,damage:4.8,rate:1.3,color:'#8ebce8',health:70,live:true},
+ {id:'sniper',name:'Lookout',key:'2',price:125,desc:'Directional long-range watcher · drag to aim',range:690,damage:4.8,rate:1.3,arc:.72,color:'#8ebce8',health:70,live:true},
  {id:'turret',name:'Auto-turret',key:'3',price:168,desc:'Mount on rooftops or street level',range:192,damage:1.25,rate:.11,color:'#d9c78c',health:100},
- {id:'mortar',name:'Mortar station',key:'4',price:225,desc:'Heavy impacts can topple buildings',range:540,damage:10,rate:3.15,color:'#c8a2dd',health:85},
+ {id:'mortar',name:'Mortar station',key:'4',price:225,desc:'Heavy impacts can topple buildings',range:540,damage:10,rate:4.75,color:'#c8a2dd',health:85},
  {id:'zone',name:'Safe zone',key:'5',price:85,desc:'Affordable · snaps to adjacent shelter corners',color:'#7cddc3'},
  {id:'beacon',name:'Evacuation beacon',key:'6',price:65,desc:'Budget evacuation guidance · 420m range',range:420,color:'#7de6e2',health:95},
  {id:'wall',name:'Barricade',key:'7',price:38,desc:'Independent sections · pay by length',color:'#d3b67a'},
  {id:'gate',name:'Shelter gate',key:'8',price:110,desc:'180 people/s · stronger reinforced HP',color:'#b5efcb'},
  {id:'helicopter',name:'Patrol helicopter',key:'0',price:580,desc:'Light airborne horde patrol',range:215,damage:1.05,rate:.42,color:'#b5d9dc',health:180,live:true},
  {id:'tank',name:'Tank',key:'9',price:950,cooldown:16,desc:'Permanent armor · airdropped during outbreak',range:250,damage:7,rate:.9,color:'#c1be87',health:450,live:true},
- {id:'battleship',name:'Battleship',key:'b',price:2900,desc:'Permanent naval artillery · very wide bombardment range · water only',range:4400,damage:28,rate:6.7,color:'#a5c4d6',health:650}];
+ {id:'battleship',name:'Battleship',key:'b',price:6800,desc:'Permanent naval artillery · very wide bombardment range · water only',range:4400,damage:28,rate:11.5,color:'#a5c4d6',health:650},
+ {id:'machinegun',name:'Machine-gun nest',key:'m',price:325,desc:'Fast, narrow directional fire · drag to aim',range:175,damage:.82,rate:.052,arc:.38,color:'#e1b66f',health:115,live:true},
+ {id:'minefield',name:'Mine field',key:'n',price:155,desc:'Hidden area denial · blast and rearm',range:66,damage:18,rate:11,color:'#d88b72',health:60}];
 const supports=[
  {id:'infantry',name:'Ground response squad',key:'F',price:175,cooldown:5,desc:'Pursues distant hordes',range:173,damage:1.9,rate:.27,color:'#80b1ff',health:150},
  {id:'airstrike',name:'Airstrike',key:'Q',price:340,cooldown:9,desc:'Animated area response',color:'#e4bc86'},
@@ -286,7 +289,7 @@ const supports=[
 const unitSpec=id=>tools.find(a=>a.id===id)||supports.find(a=>a.id===id);
 // Only buildings, permanent vehicles and defensive stations carry between stages.
 // Ground responders and parachute infantry leave after the current stage.
-const PERSISTENT_DEFENSES=new Set(['garrison','sniper','turret','mortar','beacon','helicopter','tank','battleship']);
+const PERSISTENT_DEFENSES=new Set(['garrison','sniper','turret','mortar','beacon','helicopter','tank','battleship','machinegun','minefield']);
 const isRoundOnlyUnit=id=>id==='infantry'||id==='attackheli';
 const defenseCanBuild=id=>phase!=='live'||['garrison','sniper','helicopter','tank'].includes(id);
 const scenarios=[
@@ -355,8 +358,8 @@ let quietClock=0,showRanges=true,pendingSurges=[],zombieSliceTick=0,zombieSpawnC
 // Endless is opt-in after finishing all six districts. A lightweight checkpoint
 // is recorded only between waves, never during a busy combat frame.
 const ENDLESS_SAVE_KEY='cityfall_endless_checkpoint_v1',ENDLESS_BEST_KEY='cityfall_endless_best_v1';
-const ENDLESS_ACTIVE_LIMIT=1700,ENDLESS_WAVE_LIMIT=9000;
-let endlessMode=false,endlessWave=0,endlessPressure=0,endlessAwardedWave=0,endlessNextAt=0,endlessBest=0;
+const ENDLESS_PACING_TARGET=1700,ENDLESS_WAVE_LIMIT=9000,ENDLESS_INTERMISSION_SECONDS=12,MAX_GATE_LEVEL=9;
+let endlessMode=false,endlessWave=0,endlessPressure=0,endlessAwardedWave=0,endlessNextAt=0,endlessBest=0,endlessIntermission=0;
 try{endlessBest=Math.max(0,Number(localStorage.getItem(ENDLESS_BEST_KEY))||0)}catch{}
 // Campaign-wide difficulty is independent of the per-wave adaptive director.
 let campaignThreat={carry:1,completed:0,lastGain:0},humanSearchClock=0,humanClusters=[],shelterTargets=new Map(),fallingBuildings=[];
@@ -370,6 +373,8 @@ const GARRISON_RECRUIT_GLOBAL_CAP=240;
 const garrisonCapacity=u=>3+Math.min(4,u.level||1);
 const garrisonInterval=u=>Math.max(5,13.5-2*(Math.max(1,u.level||1)-1));
 const gateUpgradeCost=g=>Math.ceil((95+65*Math.pow(g.level||1,1.4))/5)*5;
+const gateFlowRate=g=>Math.round(GATE_FLOW_RATE*Math.pow(1.72,Math.max(0,(g.level||1)-1)));
+const gateFlowBurst=g=>Math.round(GATE_FLOW_BURST*Math.pow(1.42,Math.max(0,(g.level||1)-1)));
 
 let wallGrid=new Map(),wallGridDirty=true;
 function buildingCoreHeight(b){return 14+b.height*13+b.shade*.7}
@@ -394,6 +399,8 @@ const ICONS={
  sniper:'<circle cx="16" cy="12" r="5"/><path d="M12 19h8l4 10H8zM5 5l4 4M23 6l4-4M16 2v4"/>',
  turret:'<rect x="7" y="14" width="18" height="14" rx="4"/><rect x="13" y="8" width="6" height="15" rx="2"/><path d="M5 25h22M4 30h24"/>',
  mortar:'<rect x="8" y="21" width="16" height="7" rx="2"/><path d="M11 22L18 7l6 3-7 15M5 29h22"/>',
+ machinegun:'<path d="M5 25h22M9 25V14h8v11M17 16h11M17 20h8M12 14V8h5"/>',
+ minefield:'<circle cx="16" cy="16" r="9"/><path d="M16 3v5M16 24v5M3 16h5M24 16h5M9 9l3 3M20 20l3 3M23 9l-3 3M12 20l-3 3"/>',
  zone:'<path d="M5 13L16 5l11 8v15H5zM11 13h10v15H11zM16 10v8M12 14h8"/>',
  beacon:'<path d="M16 6v21M10 27h12M12 13h8M7 10Q16 1 25 10M4 7Q16-5 28 7"/>',
  wall:'<rect x="3" y="13" width="26" height="14" rx="2"/><path d="M3 20h26M11 13v7M20 20v7M5 9h22"/>',
@@ -813,7 +820,8 @@ function gateQueueStand(g,rank){
 }
 function gateFlowTick(dt){
  for(const g of gates){
-  g.flowTokens=Math.min(GATE_FLOW_BURST,(g.flowTokens??GATE_FLOW_BURST)+GATE_FLOW_RATE*dt);
+  const burst=gateFlowBurst(g);
+  g.flowTokens=Math.min(burst,(g.flowTokens??burst)+gateFlowRate(g)*dt);
   g.waiting=0;g.queueGroups=0;
  }
  // One O(civilians) pass, not one scan per gate. Weighted groups contribute
@@ -825,13 +833,14 @@ function gateFlowTick(dt){
   if((p.entering&&d<170)||d<85){p.queueRank=g.queueGroups++;g.waiting+=p.weight}
  }
 }
+function minefieldAt(x,y,margin=0){return defenses.some(u=>u.type==='minefield'&&u.hp>0&&Math.hypot(u.x-x,u.y-y)<(u.range||66)+margin)}
 function safeWavePoint(x,y,margin=12){
- return walkable(x,y,3)&&!zones.some(z=>z.hp>0&&isInZone(x,y,z,margin));
+ return walkable(x,y,3)&&!zones.some(z=>z.hp>0&&isInZone(x,y,z,margin))&&!minefieldAt(x,y,36);
 }
-function safeWaveOrigin(){
- for(let n=0;n<110;n++){const p=roadSpawn(Math.random);if(safeWavePoint(p.x,p.y,28))return p}
+function safeWaveOrigin(avoid=[]){
+ for(let n=0;n<110;n++){const p=roadSpawn(Math.random);if(safeWavePoint(p.x,p.y,28)&&avoid.every(q=>Math.hypot(p.x-q.x,p.y-q.y)>Math.max(360,Math.min(W,H)*.13)))return p}
  // Rare near-saturation fallback; intentionally never return a coordinate in a shelter.
- for(let gy=25;gy<H-25;gy+=24)for(let gx=25;gx<W-25;gx+=24){if(safeWavePoint(gx,gy,20))return{x:gx,y:gy}}
+ for(let gy=25;gy<H-25;gy+=24)for(let gx=25;gx<W-25;gx+=24){if(safeWavePoint(gx,gy,20)&&avoid.every(q=>Math.hypot(gx-q.x,gy-q.y)>260))return{x:gx,y:gy}}
  return null;
 }
 function safeWaveCohortPoint(origin){
@@ -1012,9 +1021,10 @@ function shipPlacementWater(x,y){if(!placementAllowed(x,y))return false;
  }
  return [[0,0],[-35,0],[35,0]].every(([dx,dy])=>waterAt(x+dx,y+dy))
 }
-function addDefense(id,x,y,free=false){const t=unitSpec(id);if(!t||!t.health||!free&&(budget<t.price||tools.includes(t)&&!defenseCanBuild(id))){if(!free)notify('Deployment unavailable or not enough funding.',true);return null}
+function addDefense(id,x,y,free=false,rotation=0){const t=unitSpec(id);if(!t||!t.health||!free&&(budget<t.price||tools.includes(t)&&!defenseCanBuild(id))){if(!free)notify('Deployment unavailable or not enough funding.',true);return null}
  if(id==='infantry'||id==='tank'){const r=roadSafe(x,y);x=r.x;y=r.y}
  if(id==='battleship'&&!shipPlacementWater(x,y)){if(!free)notify('Battleships must be deployed in navigable open water, away from bridges and shorelines.',true);return null}
+ if(id==='minefield'&&(!walkable(x,y,4)||zones.some(z=>z.hp>0&&isInZone(x,y,z,12)))){if(!free)notify('Mine fields need open ground outside safe zones and water.',true);return null}
  if(!placementAllowed(x,y)){if(!free)notify('Cannot deploy outside the city boundary.',true);return null}
  if(defenses.some(u=>Math.hypot(u.x-x,u.y-y)<20)){if(!free)notify('Too close to another unit.',true);return null}
  if(!free&&phase==='live'&&id==='tank'){
@@ -1029,8 +1039,8 @@ function addDefense(id,x,y,free=false){const t=unitSpec(id);if(!t||!t.health||!f
  }
  if(!free&&phase==='live'&&id==='helicopter'){budget-=t.price;spawnCooldowns[id]=time+9;arrivals.push({type:id,x,y,age:0,delay:2.7,price:t.price});log('Patrol helicopter requested; arrival inbound.');effectSound('radio');notify('Helicopter approaching · 9s cooldown');renderUI(true);return{queued:true}}
  if(!free)budget-=t.price;
- const roof=['garrison','sniper','turret','mortar','beacon'].includes(id)?roofBuildingAt(x,y):null;
- const u={id:unitId++,type:id,x,y,roofKey:roof?.key||null,roofHeight:roof?buildingHeight(roof)+2.5:0,level:1,kills:0,shots:0,rotation:0,cooldown:rnd(.1,.6),hp:t.health,maxHp:t.health,range:t.range,damage:t.damage,rate:t.rate,price:free?0:t.price,alive:true,flash:0,route:[],routeAt:0,reroute:0,fromDrop:free,temporary:isRoundOnlyUnit(id),holdTimer:6,hadContact:false,recruitClock:2.5+rnd(0,3),recruitedTotal:0};defenses.push(u);
+ const roof=['garrison','sniper','turret','mortar','beacon','machinegun'].includes(id)?roofBuildingAt(x,y):null;
+ const u={id:unitId++,type:id,x,y,roofKey:roof?.key||null,roofHeight:roof?buildingHeight(roof)+2.5:0,level:1,kills:0,shots:0,rotation,cooldown:rnd(.1,.6),hp:t.health,maxHp:t.health,range:t.range,damage:t.damage,rate:t.rate,arc:t.arc||TAU,price:free?0:t.price,alive:true,flash:0,route:[],routeAt:0,reroute:0,fromDrop:free,temporary:isRoundOnlyUnit(id),holdTimer:6,hadContact:false,recruitClock:2.5+rnd(0,3),recruitedTotal:0,mineArmed:id==='minefield',mineRadius:id==='minefield'?92:0};defenses.push(u);
  if(!free){selected=u;toolId=id;log(t.name+(roof?' secured to rooftop ('+Math.round(u.roofHeight)+'m high).':' positioned on the ground.'));effectSound('deploy');renderUI(true);saveCampaign()}beaconGridDirty=true;return u}
 function strictCross(a,b,c,d){const cross=(p,q,r)=>(q.x-p.x)*(r.y-p.y)-(q.y-p.y)*(r.x-p.x);const u=cross(a,b,c),v=cross(a,b,d),w=cross(c,d,a),t=cross(c,d,b);return u*v<-.0001&&w*t<-.0001}
 function polysOverlap(a,b){if(a.some(p=>polyContains(p.x+1e-3*(a.reduce((v,q)=>v+q.x,0)/a.length-p.x),p.y+1e-3*(a.reduce((v,q)=>v+q.y,0)/a.length-p.y),b))||b.some(p=>polyContains(p.x+1e-3*(b.reduce((v,q)=>v+q.x,0)/b.length-p.x),p.y+1e-3*(b.reduce((v,q)=>v+q.y,0)/b.length-p.y),a)))return true;for(let i=0;i<a.length;i++)for(let j=0;j<b.length;j++)if(strictCross(a[i],a[(i+1)%a.length],b[j],b[(j+1)%b.length]))return true;return false}
@@ -1147,30 +1157,33 @@ function threatDirector(){const save=survivalRatio(),loss=1-save;
 // ticks. Large stages never allocate/move thousands of zombies in a single frame.
 function spawnWaveBatch(job,amount){let created=0,attempts=0;
  while(created<amount&&job.remaining>0&&attempts<amount*5){attempts++;
-  const o=job.origin,px=clamp(o.x+rnd(-75,75),10,W-10),py=clamp(o.y+rnd(-75,75),10,H-10);
+  const o=job.origins[(job.originCursor++)%job.origins.length],px=clamp(o.x+rnd(-75,75),10,W-10),py=clamp(o.y+rnd(-75,75),10,H-10);
   let pos=safeWavePoint(px,py,4)?{x:px,y:py}:null;
   if(!pos&&attempts%4===0)pos=safeWaveCohortPoint(o);
-  if(!pos){if(attempts%5!==0)continue;pos=safeWavePoint(o.x,o.y,2)?o:safeWaveOrigin()}
+  if(!pos){if(attempts%5!==0)continue;pos=safeWavePoint(o.x,o.y,2)?o:safeWaveOrigin(job.origins)}
   if(!pos)break;
   const z=infected(pos.x,pos.y);z.speed=(z.speed+Math.min(4,time/70))*job.profile.speed;
   z.siegeStrength=job.profile.siege;z.hp=z.maxHp=1;zombies.push(z);created++;job.remaining--;
  }
  return created}
 function spawnCluster(count,edge=false,profile=null){
+ const waveNo=endlessMode?Math.max(1,endlessWave):Math.max(1,spawnedWaves+1),originCount=edge?Math.min(5,2+Math.floor((waveNo-1)/3)):2;
  const origin=(!edge&&outbreak&&safeWavePoint(outbreak.x,outbreak.y,10)?outbreak:null)||safeWaveOrigin();
  if(!origin){log('No open city ground remains for a new surge.');return null}
- const job={remaining:Math.max(0,Math.round(count)),total:Math.max(0,Math.round(count)),origin,profile:profile||{speed:1,siege:1}};
+ const origins=[origin];
+ while(origins.length<originCount){const extra=safeWaveOrigin(origins);if(!extra)break;origins.push(extra)}
+ const job={remaining:Math.max(0,Math.round(count)),total:Math.max(0,Math.round(count)),origin,origins,originCursor:0,profile:profile||{speed:1,siege:1}};
  const first=spawnWaveBatch(job,Math.min(job.remaining,SURGE_FIRST_BATCH));
  if(job.remaining>0)pendingSurges.push(job);
- effects.push({type:'pulse',x:origin.x,y:origin.y,r:12,max:85,life:1.5,maxLife:1.5,color:'#d97974'});
- return {...origin,created:first,scheduled:job.total}
+ for(const p of origins)effects.push({type:'pulse',x:p.x,y:p.y,r:12,max:85,life:1.5,maxLife:1.5,color:'#d97974'});
+ return {...origin,origins,created:first,scheduled:job.total}
 }
 function advanceSurgeSpawns(dt){if(!pendingSurges.length)return;
  zombieSpawnCarry=Math.min(400,zombieSpawnCarry+dt*SURGE_BATCH_PER_SECOND);
  let allowance=Math.min(MAX_SPAWN_PER_TICK,Math.floor(zombieSpawnCarry));
- // Backlog grows in total size, but never produces an unbounded number of
- // simultaneously simulated/rendered agents at high endless wave counts.
- if(endlessMode)allowance=Math.min(allowance,Math.max(0,ENDLESS_ACTIVE_LIMIT-zombies.length));
+ // Endless waves keep every scheduled infected, but ease their arrival when a
+ // device is already handling a very large horde. This is pacing, not a cap.
+ if(endlessMode&&zombies.length>ENDLESS_PACING_TARGET)allowance=Math.max(1,Math.floor(allowance/(1+(zombies.length-ENDLESS_PACING_TARGET)/ENDLESS_PACING_TARGET)));
  if(!allowance)return;
  for(const job of pendingSurges){if(allowance<=0)break;
   const actual=spawnWaveBatch(job,Math.min(allowance,job.remaining));
@@ -1337,7 +1350,18 @@ function bestExitGate(zone,z,destination){let best=null,score=Infinity;
 function moveZombie(z,dt){let route=z.route||[],target=route[z.routeAt];if(!target)return;
  if(Math.hypot(target.x-z.x,target.y-z.y)<9){z.routeAt++;target=route[z.routeAt];if(!target)return}
  const previous={x:z.x,y:z.y};steerAgent(z,target,z.speed*1.06,dt,zombieGrid,'zombie',z.navKey);
- if(previous.x===z.x&&previous.y===z.y){const blocked=zoneBoundaryBlocked(previous,{x:previous.x+(target.x-previous.x)*.025,y:previous.y+(target.y-previous.y)*.025},'zombie');if(blocked)z.wallSiege=blocked.zone}}
+ if(previous.x===z.x&&previous.y===z.y){z.stuck=(z.stuck||0)+dt;const blocked=zoneBoundaryBlocked(previous,{x:previous.x+(target.x-previous.x)*.025,y:previous.y+(target.y-previous.y)*.025},'zombie');if(blocked)z.wallSiege=blocked.zone}else z.stuck=Math.max(0,(z.stuck||0)-dt*2)}
+function nudgeCrowds(dt){
+ // Cohort-sized social spacing: a bounded nearby query keeps crowds readable
+ // without attempting an expensive per-resident fluid simulation.
+ const nudge=(items,own,other,radius,offset,includeFlow)=>{const stride=items.length>(deviceProfile.constrained?1800:3200)?3:items.length>900?2:1,start=(civilianSliceTick+zombieSliceTick+offset)%stride;
+  for(let i=start;i<items.length;i+=stride){const p=items[i];if(!p.alive||p.sheltered)continue;let vx=0,vy=0,hits=0;
+   eachNearby(own,p.x,p.y,radius,q=>{if(q===p||!q.alive||q.sheltered||hits>=12)return;const dx=p.x-q.x,dy=p.y-q.y,d2=dx*dx+dy*dy;if(d2<=.01||d2>=radius*radius)return;const pull=(radius-Math.sqrt(d2))/radius;vx+=dx/Math.sqrt(d2)*pull;vy+=dy/Math.sqrt(d2)*pull;hits++;if(includeFlow&&p.stuck>.14){vx+=(q.vx||0)*.028;vy+=(q.vy||0)*.028}});
+   eachNearby(other,p.x,p.y,radius*.82,q=>{if(!q.alive||q.sheltered)return;const dx=p.x-q.x,dy=p.y-q.y,d2=dx*dx+dy*dy;if(d2<=.01||d2>=radius*radius*.68)return;const d=Math.sqrt(d2),push=(radius*.82-d)/(radius*.82);vx+=dx/d*push*.72;vy+=dy/d*push*.72});
+   const len=Math.hypot(vx,vy);if(len<.04)continue;const step=Math.min(3.8,dt*(includeFlow&&p.stuck>.14?24:15));const nx=p.x+vx/len*step,ny=p.y+vy/len*step;if(walkable(nx,ny,2)&&!zoneBoundaryBlocked(p,{x:nx,y:ny},p.sheltered!==undefined?'civilian':'zombie')){p.x=nx;p.y=ny}
+  }};
+ nudge(zombies,zombieGrid,civGrid,13,0,true);nudge(people,civGrid,zombieGrid,15,1,false);
+}
 function updateZombies(dt){const gateSiege=new Map(),wallSiege=new Map(),activeCount=zombies.length;
  const stride=activeCount>(deviceProfile.constrained?1500:2600)?3:activeCount>(deviceProfile.constrained?560:900)?2:1,offset=zombieSliceTick++%stride;
  const originalDt=dt;dt*=stride;
@@ -1390,6 +1414,9 @@ function fireUnit(u,target){u.rotation=Math.atan2(target.y-u.y,target.x-u.x);u.f
 let damage=u.damage*(1+.35*(u.level-1));target.hp-=damage;target.flash=.13;tracers.push({x1:u.x,y1:u.y,z1:(u.roofHeight||0)+12,x2:target.x,y2:target.y,life:u.type==='turret'?.14:u.type==='tank'?.38:.24,maxLife:u.type==='turret'?.14:u.type==='tank'?.38:.24,color:t.color,heavy:u.type==='tank'});if(target.hp<=0){u.kills++;if(u.recruited&&u.homeBase)u.homeBase.kills++;killZombie(target)}gunSound(u.x,u.y,u.type==='tank')
 }
 
+function targetInsideArc(u,target){if(!u.arc||u.arc>=TAU-.001)return true;const angle=Math.atan2(target.y-u.y,target.x-u.x),delta=Math.atan2(Math.sin(angle-u.rotation),Math.cos(angle-u.rotation));return Math.abs(delta)<=u.arc*.5}
+function closestZombieForUnit(u,range){let best=null,bd=range*range;eachNearby(zombieGrid,u.x,u.y,range,z=>{if(!z.alive||!targetInsideArc(u,z))return;const d=(z.x-u.x)**2+(z.y-u.y)**2;if(d<bd){bd=d;best=z}});return best}
+
 function updateShells(dt){for(const s of shells){s.age+=dt;if(s.age<s.duration)continue;s.done=true;
  let hits=0;eachNearby(zombieGrid,s.x2,s.y2,s.radius,z=>{if(z.alive&&Math.hypot(z.x-s.x2,z.y-s.y2)<s.radius){z.hp-=s.damage;z.flash=.35;hits++;if(z.hp<=0){s.unit.kills++;killZombie(z)}}});
  damageBridges(s.x2,s.y2,52,s.damage*12);tryCollapseBuildings(s.x2,s.y2,s.radius,s.naval?.48:.31,s.naval?5:2);
@@ -1441,6 +1468,12 @@ function updateGarrisons(dt){
  }
 }
 function updateDefenses(dt){for(const u of defenses){if(u.hp<=0||u.departed)continue;u.cooldown-=dt;u.flash=Math.max(0,u.flash-dt);if(u.type==='beacon'||u.type==='garrison')continue;
+ if(u.type==='minefield'){
+  if(!u.mineArmed){if(u.cooldown<=0){u.mineArmed=true;u.flash=.16;effects.push({type:'ring',x:u.x,y:u.y,r:4,max:u.mineRadius,life:.35,maxLife:.35,color:'#d7bc78'})}continue}
+  const trigger=closestZombie(u.x,u.y,u.mineRadius);
+  if(trigger){let hits=0;eachNearby(zombieGrid,u.x,u.y,u.mineRadius,z=>{if(z.alive&&Math.hypot(z.x-u.x,z.y-u.y)<=u.mineRadius){z.hp-=u.damage;z.flash=.35;hits++;if(z.hp<=0){u.kills++;killZombie(z)}}});u.mineArmed=false;u.cooldown=u.rate;effects.push({type:'blast',x:u.x,y:u.y,r:7,max:u.mineRadius,life:.7,maxLife:.7});tryCollapseBuildings(u.x,u.y,Math.min(38,u.mineRadius*.42),.04,1);if(hits)effectSound('blast')}
+  continue
+ }
  if(u.type==='battleship'){
   if(u.cooldown<=0){const cluster=seekHorde(u.x,u.y,u.range),target=cluster&&Math.hypot(cluster.x-u.x,cluster.y-u.y)<=u.range?cluster:closestZombie(u.x,u.y,Math.min(900,u.range));
    if(target){fireUnit(u,target);u.cooldown=u.rate/Math.pow(1.12,u.level-1)}else u.cooldown=.55}
@@ -1467,7 +1500,7 @@ function updateDefenses(dt){for(const u of defenses){if(u.hp<=0||u.departed)cont
    eachNearby(zombieGrid,u.x,u.y,12,z=>{if(z.alive&&Math.hypot(z.x-u.x,z.y-u.y)<12)contacts++});
    if(contacts>0){u.hp=Math.max(0,u.hp-dt*Math.min(42,3.2+contacts*3.1));if(u.hp<=0){u.alive=false;effects.push({type:'smoke',x:u.x,y:u.y,r:4,max:15,life:.4,maxLife:.4});continue}}
  }
- if(u.cooldown>0)continue;let target=closestZombie(u.x,u.y,u.range*(1+.13*(u.level-1)));if(target){fireUnit(u,target);u.cooldown=u.rate/Math.pow(1.16,u.level-1)}else u.cooldown=.15
+ if(u.cooldown>0)continue;let target=closestZombieForUnit(u,u.range*(1+.13*(u.level-1)));if(target){fireUnit(u,target);u.cooldown=u.rate/Math.pow(1.16,u.level-1)}else u.cooldown=.15
  }compactInPlace(defenses,u=>!u.departed&&(!u.recruited||u.hp>0))
 }
 function retireRoundUnits(){
@@ -1498,8 +1531,8 @@ async function startEndless(checkpoint=null){
  endlessPressure=checkpoint?Math.max(0,Number(checkpoint.endlessPressure)||0):0;
  endlessAwardedWave=checkpoint?Math.max(0,Math.floor(checkpoint.endlessAwardedWave||0)):0;
  phase='live';prevPhase='live';spawnedWaves=scenarioAt().waves.length;
- zombies=[];pendingSurges=[];zombieSpawnCarry=0;quietClock=0;zeroTime=0;
- endlessNextAt=time+5;threatProfile=threatDirector();
+ zombies=[];pendingSurges=[];zombieSpawnCarry=0;quietClock=0;zeroTime=0;endlessIntermission=6;
+ endlessNextAt=time+endlessIntermission;threatProfile=threatDirector();
  // A restored endless checkpoint has no initial-outbreak marker; the 3D
  // overlay and ambient sound still expect a valid location.
  if(!outbreak||!Number.isFinite(outbreak.x)||!Number.isFinite(outbreak.y))outbreak=safeWaveOrigin()||roadSpawn(Math.random);
@@ -1507,14 +1540,15 @@ async function startEndless(checkpoint=null){
  $('phaseLabel').textContent='ENDLESS SURVIVAL — INFINITE WAVES';
  $('phaseDot').style.background='#e68d88';$('phaseDot').style.boxShadow='0 0 8px #e68d8855';
  $('startBtn').style.display='none';$('pauseBtn').style.display='';
- $('mapTip').innerHTML='<b>ENDLESS SURVIVAL.</b> New infected waves continue forever, with escalating threat. Five quiet seconds trigger the next wave. Clear waves for extra funds.';
+ $('mapTip').innerHTML='<b>ENDLESS SURVIVAL.</b> New infected waves continue forever, with escalating threat. Each clear earns a short intermission to re-arm before the next wave.';
  $('mapTip').classList.add('warn');$('modalOverlay').classList.add('hidden');$('introOverlay').classList.add('hidden');
  toolId=null;closeDrawers();updateButtons();updateToolUi();renderUI(true);
  if(!checkpoint)saveEndlessCheckpoint();
  log('ENDLESS MODE ENGAGED. All permanent defenses remain deployed.');
- notify('∞ ENDLESS SURVIVAL · NEXT SURGE IN 5s');effectSound('warning');
+ notify('∞ ENDLESS SURVIVAL · PREPARE FOR 6s');effectSound('warning');
 }
 function launchEndlessWave(auto=false){if(!endlessMode||phase!=='live')return;
+ endlessIntermission=0;
  endlessWave++;
  // Persistent, strictly increasing bonus on top of earned campaign pressure.
  endlessPressure=.20*endlessWave+.012*Math.pow(endlessWave,1.4);
@@ -1536,10 +1570,10 @@ function endlessWaveCleared(){if(!endlessMode||endlessWave<=endlessAwardedWave)r
  const grant=Math.round(350+Math.min(8000,endlessWave*135)+survivalRatio()*400);
  budget+=grant;
  if(endlessWave>endlessBest){endlessBest=endlessWave;try{localStorage.setItem(ENDLESS_BEST_KEY,String(endlessBest))}catch{}}
- // Keep at least a five-second interval even when a scheduled wave was due.
- endlessNextAt=Math.max(endlessNextAt,time+5);
- log('Endless wave '+endlessWave+' cleared. +$'+fmt(grant)+' resupply; temporary responders withdrawn.');
- notify('WAVE '+endlessWave+' CLEARED · +$'+fmt(grant)+' · NEXT WAVE SOON');
+ endlessIntermission=ENDLESS_INTERMISSION_SECONDS;
+ endlessNextAt=time+endlessIntermission;
+ log('Endless wave '+endlessWave+' cleared. +$'+fmt(grant)+' resupply; '+ENDLESS_INTERMISSION_SECONDS+'s intermission to re-arm.');
+ notify('WAVE '+endlessWave+' CLEARED · +$'+fmt(grant)+' · '+ENDLESS_INTERMISSION_SECONDS+'s INTERMISSION');
  effectSound('rescue');saveEndlessCheckpoint();
 }
 function finish(win){if(phase==='won'||phase==='lost')return;
@@ -1576,11 +1610,14 @@ function tick(dt){time+=dt;const sc=scenarioAt();gateFlowTick(dt);if(wallGridDir
  // surge, even if its scheduled time is later. Active hordes use normal timing.
  const active=pendingSurges.length>0||zombies.length>0;quietClock=active?0:quietClock+dt;
  if(endlessMode){
-  if(!pendingSurges.length&&(time>=endlessNextAt||quietClock>=5))launchEndlessWave(quietClock>=5);
+  if(!pendingSurges.length&&zombies.length===0){
+   endlessIntermission=Math.max(0,endlessIntermission-dt);
+   if(endlessIntermission<=0&&time>=endlessNextAt)launchEndlessWave();
+  }
  }else if(spawnedWaves<sc.waves.length&&(time>=sc.waves[spawnedWaves]||quietClock>=5))launchWave(quietClock>=5);
  advanceSurgeSpawns(dt);
  // Rebuild the short-range indices between stages to avoid O(people × zombies) scans.
- if(beaconGridDirty){rebuildGrid(beaconGrid,defenses,activeBeacon);beaconGridDirty=false}rebuildGrid(zombieGrid,zombies);hordeClock-=dt;if(hordeClock<=0){hordeHotspots();hordeClock=deviceProfile.constrained ? .82 : .64}updateCivilians(dt);rebuildGrid(civGrid,people);updateZombies(dt);
+ if(beaconGridDirty){rebuildGrid(beaconGrid,defenses,activeBeacon);beaconGridDirty=false}rebuildGrid(zombieGrid,zombies);hordeClock-=dt;if(hordeClock<=0){hordeHotspots();hordeClock=deviceProfile.constrained ? .82 : .64}updateCivilians(dt);rebuildGrid(civGrid,people);updateZombies(dt);rebuildGrid(zombieGrid,zombies);nudgeCrowds(dt);
  if(livingPopulation()===0){finish(false);return}
  rebuildGrid(zombieGrid,zombies);rebuildGrid(unitGrid,defenses,activeUnit);updateDefenses(dt);updateGarrisons(dt);updateAircraft(dt);updateShells(dt);updateBuildingCollapses(dt);
  ageTransient(effects,dt);ageTransient(tracers,dt);compactInPlace(zombies,aliveEntity);
@@ -1604,7 +1641,7 @@ function rooftopPick(sx,sy){let best=null,maxHeight=-1;
 function projectedUnitPick(sx,sy){let best=null,nearest=26*26;
  for(const u of defenses){if(u.hp<=0)continue;const p=project3D(u.x,u.y,(u.roofHeight||0)+12),d=(p.x-sx)**2+(p.y-sy)**2;
  if(d<nearest){nearest=d;best=u}}return best}
-function zoomAt(delta,sx,sy){markZoomMoving();let p=screenToWorld(sx,sy),n=clamp(cam.zoom*Math.exp(-delta*.0012),isNYC()?NYC_MIN_ZOOM:.25,1.85);cam.zoom=n;let q=screenToWorld(sx,sy);cam.x+=p.x-q.x;cam.y+=p.y-q.y;clampCamera()}
+function zoomAt(delta,sx,sy){markZoomMoving();let p=screenToWorld(sx,sy),n=clamp(cam.zoom*Math.exp(-delta*.0012),NYC_MIN_ZOOM,1.85);cam.zoom=n;let q=screenToWorld(sx,sy);cam.x+=p.x-q.x;cam.y+=p.y-q.y;clampCamera()}
 function rounded(ctx,x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,r)}
 function drawZone(z,c,opacity=1){if(z.hp<=0)return;c.save();c.globalAlpha=opacity;const f=z.hp/z.maxHp;c.fillStyle='rgba(94,206,178,.115)';const path=()=>{const pts=zoneVertices(z);c.beginPath();c.moveTo(pts[0].x,pts[0].y);for(const p of pts.slice(1))c.lineTo(p.x,p.y);c.closePath()};path();c.fill();
  c.strokeStyle=f<.3?'#d7926f':'#295a51';c.lineWidth=10;path();c.stroke();c.strokeStyle=f<.3?'#f2b685':'#8be5c4';c.lineWidth=4;path();c.stroke();
@@ -1680,7 +1717,7 @@ function shiftCameraScreen(dx,dy){
  const cs=Math.cos(camera3D.yaw),sn=Math.sin(camera3D.yaw),rx=dx/cam.zoom,ry=dy/(cam.zoom*Math.sin(camera3D.tilt));
  cam.x-=rx*cs+ry*sn;cam.y-=-rx*sn+ry*cs;clampCamera();
 }
-function rotate3DCamera(by=.35){camera3D.yaw+=by;if(camera3D.yaw>Math.PI)camera3D.yaw-=TAU;if(camera3D.yaw< -Math.PI)camera3D.yaw+=TAU;notify('3D camera rotated · drag to pan / wheel or pinch to zoom')}
+function rotate3DCamera(by=.35){camera3D.yaw+=by;if(camera3D.yaw>Math.PI)camera3D.yaw-=TAU;if(camera3D.yaw< -Math.PI)camera3D.yaw+=TAU;notify('3D camera rotated · right-drag to orbit / middle or Shift-drag to pan')}
 class CityRenderer{
  constructor(){
   this.canvas=document.createElement('canvas');this.canvas.id='world3d';canvas.parentElement.insertBefore(this.canvas,canvas);
@@ -1940,7 +1977,7 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
   }else if(u.type==='infantry'){
    box(xx,yy,4,5,5,8,'#608bab',rot);box(xx,yy,9.2,4,4,3,'#c0c3a9');let gun=offset(5,1);box(gun.x,gun.y,6.7,9,1.2,1.3,'#d4d3aa',rot)
   }else if(u.type==='sniper'){
-   box(xx,yy,12,7,7,23,'#51616b');box(xx,yy,25,17,17,4,'#80acc7');box(xx,yy,29,18,18,2,'#dce7dc')
+   box(xx,yy,12,7,7,23,'#51616b');box(xx,yy,25,17,17,4,'#80acc7');box(xx,yy,29,18,18,2,'#dce7dc');const barrel=offset(17,0);box(barrel.x,barrel.y,28,25,2.2,2.2,'#c9dce2',rot)
   }else if(u.type==='garrison'){
    box(xx,yy,5,22,18,9,'#478c81');box(xx,yy,11,24,20,3,'#a1ddca');
    box(xx,yy-10,4,7,4,7,'#213d42');
@@ -1951,11 +1988,15 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
    box(xx,yy,3.5,15,14,7,'#737783');box(xx,yy,10.5,6,7,11,'#c7bedc',rot);box(xx,yy,15,10,3,3,'#554d62',rot)
   }else if(u.type==='turret'){
    box(xx,yy,4.5,16,16,8,'#9b9a78');box(xx,yy,10.4,10,9,5,'#d3c385',rot);let muzzle=offset(12,0);box(muzzle.x,muzzle.y,11,18,2,3,'#d8d9ad',rot)
+  }else if(u.type==='machinegun'){
+   box(xx,yy,4.5,18,16,8,'#655b46');box(xx,yy,10,11,9,5,'#ba9658',rot);let gun=offset(13,0);box(gun.x,gun.y,11,24,2.8,2.8,'#e1c27c',rot);let tripod=offset(-3,0);box(tripod.x,tripod.y,4,22,2.1,2,'#303e3d',rot)
+  }else if(u.type==='minefield'){
+   box(xx,yy,.8,18,18,1.6,u.mineArmed?'#c58c55':'#6a6257',rot);for(const a of [0,TAU/3,TAU*2/3]){const p={x:xx+Math.cos(a)*8,y:yy+Math.sin(a)*8};box(p.x,p.y,1.8,3.1,3.1,2.5,u.mineArmed?'#e0c47e':'#827966')}
   }else if(u.type==='beacon'){
    box(xx,yy,10.5,3.2,3.2,21,'#73e0cd');box(xx,yy,24,12,12,5,'#9ff8e2')
   }
  }
- drawDynamic(){const a=this.dynamic;a.length=0;const box=(...v)=>this.box(a,...v),focus=cameraFocus(),cs=Math.cos(camera3D.yaw),sn=Math.sin(camera3D.yaw),sx=cw/(2*Math.max(isNYC()?NYC_MIN_ZOOM:.16,cam.zoom))+170,sy=ch/(2*Math.max(isNYC()?NYC_MIN_ZOOM:.16,cam.zoom)*Math.sin(camera3D.tilt))+190;
+ drawDynamic(){const a=this.dynamic;a.length=0;const box=(...v)=>this.box(a,...v),focus=cameraFocus(),cs=Math.cos(camera3D.yaw),sn=Math.sin(camera3D.yaw),sx=cw/(2*Math.max(NYC_MIN_ZOOM,cam.zoom))+170,sy=ch/(2*Math.max(NYC_MIN_ZOOM,cam.zoom)*Math.sin(camera3D.tilt))+190;
   const inView=(x,y)=>{const dx=x-focus.x,dy=y-focus.y;return Math.abs(dx*cs-dy*sn)<sx&&Math.abs(dx*sn+dy*cs)<sy};
   if(nycFullCityPreview())for(const b of futureBridges){
    const dx=b.bx-b.ax,dy=b.by-b.ay,len=Math.hypot(dx,dy),angle=Math.atan2(dy,dx);
@@ -1987,7 +2028,7 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
   // At neighborhood zoom draw EVERY nearby moving cohort, not every Nth
   // cohort city-wide. Reuse the existing spatial index and a bounded cell
   // query so this is both denser and cheaper than scanning the full city.
-  const maxVisibleCivs=Math.max(80,Math.round((cam.zoom<.035?110:cam.zoom<.14?260:cam.zoom<.32?800:(this.software?1900:4400))*visualScale));
+  const maxVisibleCivs=Math.max(100,Math.round((cam.zoom<.035?180:cam.zoom<.14?560:cam.zoom<.32?2000:(this.software?3000:7200))*visualScale));
   let visibleCivs=0,extraCivs=0;
   const extraCap=cam.zoom<.32?0:Math.round((this.software?450:1100)*visualScale);
   const showCivilian=(p)=>{
@@ -2083,8 +2124,8 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
   if(this.needsBuild||!this.staticData)this.rebuild();
   c.setTransform(dpr,0,0,dpr,0,0);c.fillStyle='#1b2a31';c.fillRect(0,0,cw,ch);
   const f=cameraFocus(),cs=Math.cos(camera3D.yaw),sn=Math.sin(camera3D.yaw),st=Math.sin(camera3D.tilt);
-  const sx=cw/(2*Math.max(isNYC()?NYC_MIN_ZOOM:.16,cam.zoom))+190;
-  const sy=ch/(2*Math.max(isNYC()?NYC_MIN_ZOOM:.16,cam.zoom)*st)+210;
+  const sx=cw/(2*Math.max(NYC_MIN_ZOOM,cam.zoom))+190;
+  const sy=ch/(2*Math.max(NYC_MIN_ZOOM,cam.zoom)*st)+210;
   const visible=(x,y)=>{const dx=x-f.x,dy=y-f.y;return Math.abs(dx*cs-dy*sn)<sx&&Math.abs(dx*sn+dy*cs)<sy};
   const useLod=lowDetailView(),moving=performance.now()<zoomPerf.movingUntil;
   const groundLimit=this.sceneGroundCount*10,staticData=this.staticData;
@@ -2147,7 +2188,10 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
   if(heatState.dirty){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,heatState.canvas);heatState.dirty=false}
   gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArrays(gl.TRIANGLES,0,6);gl.depthMask(true);gl.disable(gl.BLEND);gl.useProgram(this.program);gl.bindVertexArray(this.vao);uniforms(this.uniforms)}
  renderReferenceMap(uniforms){if(activeMap!=='nyc'||!nycReferenceMap.ready||!nycReferenceMap.canvas)return;const gl=this.gl;this.syncHeatPlane();gl.useProgram(this.mapProgram);gl.bindVertexArray(this.heatPlaneVao);uniforms(this.mapUniforms);gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,this.mapTexture);gl.uniform1i(this.mapUniforms.map,1);
-  if(nycReferenceMap.dirty){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,nycReferenceMap.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);nycReferenceMap.dirty=false}gl.drawArrays(gl.TRIANGLES,0,6);gl.useProgram(this.program);gl.bindVertexArray(this.vao);uniforms(this.uniforms)}
+  // The tile canvas shares the world coordinate convention used by the heat
+  // plane (north at smaller world Y), so matching its upload direction avoids
+  // a vertically mirrored NYC basemap after camera rotation.
+  if(nycReferenceMap.dirty){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,nycReferenceMap.canvas);nycReferenceMap.dirty=false}gl.drawArrays(gl.TRIANGLES,0,6);gl.useProgram(this.program);gl.bindVertexArray(this.vao);uniforms(this.uniforms)}
  render(){if(!this.ready)return;if(this.software)return this.renderSoftware();if(this.needsBuild||!this.staticData)this.rebuild();const gl=this.gl;
   if(this.canvas.width!==canvas.width||this.canvas.height!==canvas.height){this.canvas.width=canvas.width;this.canvas.height=canvas.height}
   gl.viewport(0,0,this.canvas.width,this.canvas.height);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.useProgram(this.program);gl.bindVertexArray(this.vao);
@@ -2166,11 +2210,11 @@ box(z.x+z.w*.5,z.y+z.h*.5,.25,z.w,z.h,.7,'#3b9279');
 const world3D=new CityRenderer();
 // World-space weapon ranges, projected onto the actual 3D ground plane rather
 // than drawn as screen-space circles (which looked incorrect when orbiting).
-function drawProjectedRange(x,y,r,color,highlight=false,label=''){
+function drawProjectedRange(x,y,r,color,highlight=false,label='',arc=TAU,rotation=0){
  if(!r||!Number.isFinite(r)||r<=0)return;
- const segments=cam.zoom>.5?64:48,verts=[],size=cam.zoom*r;
- for(let i=0;i<=segments;i++){const a=i/segments*TAU;verts.push(project3D(x+Math.cos(a)*r,y+Math.sin(a)*r,3.1))}
- ctx.save();ctx.beginPath();ctx.moveTo(verts[0].x,verts[0].y);for(let i=1;i<verts.length;i++)ctx.lineTo(verts[i].x,verts[i].y);ctx.closePath();
+ const full=arc>=TAU-.001,segments=cam.zoom>.5?64:48,verts=[],size=cam.zoom*r;
+ for(let i=0;i<=segments;i++){const a=full?i/segments*TAU:rotation-arc*.5+arc*i/segments;verts.push(project3D(x+Math.cos(a)*r,y+Math.sin(a)*r,3.1))}
+ ctx.save();ctx.beginPath();if(full){ctx.moveTo(verts[0].x,verts[0].y);for(let i=1;i<verts.length;i++)ctx.lineTo(verts[i].x,verts[i].y)}else{const base=project3D(x,y,3.1);ctx.moveTo(base.x,base.y);for(const p of verts)ctx.lineTo(p.x,p.y)}ctx.closePath();
  ctx.fillStyle=highlight?'#7ce9d01e':'#7ce9d009';ctx.fill();ctx.strokeStyle=color;
  ctx.globalAlpha=highlight?.96:.42;ctx.lineWidth=highlight?2.5:1.3;ctx.setLineDash(highlight?[]:[7,8]);ctx.stroke();ctx.setLineDash([]);
  if(highlight){const base=project3D(x,y,5);ctx.globalAlpha=.56;ctx.lineWidth=1;for(let a=0;a<TAU-.1;a+=Math.PI/2){const e=project3D(x+Math.cos(a)*r,y+Math.sin(a)*r,3.1);ctx.beginPath();ctx.moveTo(base.x,base.y);ctx.lineTo(e.x,e.y);ctx.stroke()}
@@ -2178,8 +2222,8 @@ function drawProjectedRange(x,y,r,color,highlight=false,label=''){
  ctx.restore();}
 function render3DRanges(){let count=0;
  if(showRanges)for(const u of defenses){if(u.hp<=0||!u.range||u.departed||u===selected)continue;const q=project3D(u.x,u.y,2);if(q.x< -320||q.x>cw+320||q.y< -320||q.y>ch+320)continue;
- if(count++>=22)break;drawProjectedRange(u.x,u.y,u.range*(1+.13*(u.level-1)),'#6dc2b8',false)}
- if(selected?.range&&selected.hp>0)drawProjectedRange(selected.x,selected.y,selected.range*(1+.13*(selected.level-1)),'#c5ffe3',true,unitSpec(selected.type)?.name||'Unit');
+ if(count++>=22)break;drawProjectedRange(u.x,u.y,u.range*(1+.13*(u.level-1)),'#6dc2b8',false,'',u.arc||TAU,u.rotation||0)}
+ if(selected?.range&&selected.hp>0)drawProjectedRange(selected.x,selected.y,selected.range*(1+.13*(selected.level-1)),'#c5ffe3',true,unitSpec(selected.type)?.name||'Unit',selected.arc||TAU,selected.rotation||0);
  if(toolId&&!['zone','wall','gate','strafe'].includes(toolId)&&Number.isFinite(mouse.wx)){const t=unitSpec(toolId),r=t?.range||(toolId==='airstrike'?130:toolId==='paratroopers'?85:0);
  if(r)drawProjectedRange(mouse.wx,mouse.wy,r,'#f8d18c',true,t?.name||'Support')}
 }
@@ -2203,8 +2247,8 @@ function hordeGlowScale(){return clamp(.72/Math.sqrt(Math.max(.05,cam.zoom)),.42
 // Horde density is strategic information at city scale, then gracefully gets
 // out of the way as individual infected become readable at street scale.
 function hordeGlowOpacity(){const fade=clamp((.56-cam.zoom)/.20,0,1);return fade*fade}
-function zombieHeatCellSize(){return cam.zoom>.52?24:cam.zoom>.24?32:44}
-function civilianHeatCellSize(){return cam.zoom>.52?42:cam.zoom>.24?50:58}
+function zombieHeatCellSize(){return cam.zoom>.52?18:cam.zoom>.24?27:36}
+function civilianHeatCellSize(){return cam.zoom>.52?36:cam.zoom>.24?45:54}
 function paintHordeTexture(){
  const surface=ensureHeatCanvas(),c=heatState.ctx;c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,surface.width,surface.height);
  const scale=Math.sqrt(surface.width*surface.height/(W*H)),paint=(cells,kind,base,spread,alpha)=>{if(!cells.length||alpha<=.002)return;const stamp=heatmapStamp(kind);c.save();c.globalCompositeOperation=kind==='zombie'?'source-over':'lighter';
@@ -2216,21 +2260,22 @@ function paintHordeTexture(){
 }
 function updateZombieHeatmap(now=performance.now()){
  if(!zombies.length&&!people.length){if(heatState.cells.length||heatState.civilianCells.length){heatState.cells=[];heatState.civilianCells=[];paintHordeTexture()}return heatState.cells}
- // Updating the world image at four frames per second keeps pinch/pan responsive.
+ // Refresh quickly enough to follow moving pockets, while sample limits keep
+ // older phones free from a large per-frame allocation.
  const glowScale=hordeGlowScale(),hordeOpacity=hordeGlowOpacity(),zombieCell=zombieHeatCellSize(),civilianCell=civilianHeatCellSize();
  if(now<heatState.until&&Math.abs(glowScale-heatState.glowScale)<.035&&Math.abs(hordeOpacity-heatState.hordeOpacity)<.04&&zombieCell===heatState.zombieCell&&civilianCell===heatState.civilianCell)return heatState.cells;
- heatState.until=now+240;
+ heatState.until=now+(deviceProfile.constrained?210:deviceProfile.touch?145:92);
  heatState.glowScale=glowScale;
  heatState.hordeOpacity=hordeOpacity;
  const bins=new Map(),civilianBins=new Map();
- const stride=Math.max(1,Math.ceil(zombies.length/5500));
+ const stride=Math.max(1,Math.ceil(zombies.length/(deviceProfile.constrained?3600:deviceProfile.touch?6500:9800)));
  for(let i=0;i<zombies.length;i+=stride){
   const z=zombies[i];if(!z.alive||z.incubate>0)continue;
   const gx=Math.floor(z.x/zombieCell),gy=Math.floor(z.y/zombieCell),key=gx+','+gy;
   let b=bins.get(key);if(!b){b={x:0,y:0,n:0};bins.set(key,b)}
   b.x+=z.x;b.y+=z.y;b.n++;
  }
- const civilianStride=Math.max(1,Math.ceil(people.length/5500));
+ const civilianStride=Math.max(1,Math.ceil(people.length/(deviceProfile.constrained?3200:deviceProfile.touch?5200:7600)));
  for(let i=0;i<people.length;i+=civilianStride){const p=people[i];if(!p.alive)continue;
   const gx=Math.floor(p.x/civilianCell),gy=Math.floor(p.y/civilianCell),key=gx+','+gy;
   let b=civilianBins.get(key);if(!b){b={x:0,y:0,n:0,weight:0};civilianBins.set(key,b)}
@@ -2288,6 +2333,10 @@ function drawWorldOverlay(){
     ctx.setLineDash(isAir?[14,8]:[8,7]);line({x:start.x,y:start.y,z:7},{x:end.x,y:end.y,z:7},isAir?'#ffcf77':'#f5d4a0',isAir?5:8);ctx.setLineDash([]);
     const mid=project3D((start.x+end.x)/2,(start.y+end.y)/2,12);ctx.textAlign='center';ctx.font='800 12px system-ui';ctx.fillStyle='#ffffff';ctx.fillText(isAir?'LINE AIRSTRIKE · $'+fmt(unitSpec('strafe').price):'$'+fmt(wallCost(start,end)),mid.x,mid.y-16);
     if(isAir){const v=Math.atan2(end.y-start.y,end.x-start.x),fin=project3D(end.x,end.y,12);ctx.save();ctx.translate(fin.x,fin.y);ctx.rotate(v+camera3D.yaw);ctx.fillStyle='#ffe09b';ctx.beginPath();ctx.moveTo(12,0);ctx.lineTo(-6,-6);ctx.lineTo(-6,6);ctx.closePath();ctx.fill();ctx.restore()}
+  }else if(drag.type==='aim'){
+    const spec=unitSpec(drag.id),start=drag.start,angle=Math.atan2(drag.cur.y-start.y,drag.cur.x-start.x),range=spec.range,pts=[project3D(start.x,start.y,5)];
+    for(let i=0;i<=18;i++){const a=angle-spec.arc*.5+spec.arc*i/18;pts.push(project3D(start.x+Math.cos(a)*range,start.y+Math.sin(a)*range,4))}
+    ctx.save();ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);for(const p of pts.slice(1))ctx.lineTo(p.x,p.y);ctx.closePath();ctx.fillStyle='#f0cf7a2c';ctx.strokeStyle='#ffe4a2';ctx.lineWidth=1.5;ctx.fill();ctx.stroke();line({x:start.x,y:start.y,z:8},{x:drag.cur.x,y:drag.cur.y,z:8},'#ffe4a2',3);ctx.fillStyle='#fff1c8';ctx.font='800 11px system-ui';ctx.fillText(spec.name.toUpperCase()+' · DRAG TO AIM',pts[0].x+12,pts[0].y-15);ctx.restore()
   }
  }else if(toolId){const s=unitSpec(toolId),roof=['garrison','sniper','turret','mortar','beacon'].includes(toolId)?rooftopPick(mouse.x,mouse.y):null,p=project3D(roof?.x??mouse.wx,roof?.y??mouse.wy,roof?roof.height+12:8);ctx.strokeStyle='#9df6dd';ctx.lineWidth=2;ctx.setLineDash([5,6]);ctx.beginPath();ctx.arc(p.x,p.y,10,0,TAU);ctx.stroke();ctx.setLineDash([]);if(roof){const ground=project3D(roof.x,roof.y,1);ctx.strokeStyle='#9df6d866';ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(ground.x,ground.y);ctx.lineTo(p.x,p.y);ctx.stroke()}if(toolId==='strafe'){ctx.fillStyle='#f9db9a';ctx.font='800 11px system-ui';ctx.fillText('DRAG TO AIM',p.x+15,p.y-18)}}
  if(selected&&selected.x!==undefined){const p=project3D(selected.x+((selected.w&&selected.type==='zone')?selected.w/2:0),selected.y+((selected.h&&selected.type==='zone')?selected.h/2:0),(selected.roofHeight||0)+10);ctx.strokeStyle='#d9fff2';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,14,0,TAU);ctx.stroke()}
@@ -2314,8 +2363,8 @@ function minimap(){if(!mc||mini.width<4)return;const w=mini.width,h=mini.height;
 function renderUI(force=false){const aliveCount=livingPopulation(),total=initialPopulation;let pct=survivalPercent(),safeIntegrity=zones.length?Math.round(zones.reduce((a,z)=>a+Math.max(0,z.hp),0)/zones.reduce((a,z)=>a+z.maxHp,0)*100):100;
  $('threatBaselineLabel').textContent=endlessMode?'Endless baseline':'Campaign baseline';$('campaignThreatValue').textContent=(campaignThreat.carry+(endlessMode?endlessPressure:0)).toFixed(2)+'×';$('threatValue').textContent=threatProfile.pressure.toFixed(2)+'×';$('threatBar').style.width=Math.min(100,(threatProfile.pressure-1)*58)+'%';
  const waveNext=scenarioAt().waves[spawnedWaves];
- $('nextWave').textContent=phase==='lost'?'MISSION FAILED':phase==='planning'?'Awaiting outbreak':endlessMode?(queuedZombies()?'∞ '+fmt(queuedZombies())+' incoming':zombies.length===0?'∞ WAVE '+(endlessWave+1)+' IN '+Math.max(0,5-quietClock).toFixed(1)+'s':'∞ WAVE '+endlessWave+' · '+Math.max(0,Math.ceil(endlessNextAt-time))+'s'):queuedZombies()?'Incoming '+fmt(queuedZombies()):spawnedWaves===scenarioAt().waves.length?'All surges launched':zombies.length===0?'Quiet '+Math.max(0,5-quietClock).toFixed(1)+'s':Math.max(0,Math.ceil(waveNext-time))+'s / scheduled';
- const forecast=threatDirector();$('waveDetail').textContent=phase==='lost'?'No civilians survived. Restore from the most recent checkpoint.':endlessMode?'∞ WAVE '+endlessWave+' · RECORD '+endlessBest+' · rising pressure '+forecast.pressure.toFixed(2)+'×. Simultaneous zombie cap '+fmt(ENDLESS_ACTIVE_LIMIT)+'. Five quiet seconds triggers the next wave.':spawnedWaves===scenarioAt().waves.length?'Final surge underway. Clear every infected to win.':'CAMPAIGN '+campaignThreat.carry.toFixed(2)+'× · NEXT: '+Math.round(forecast.count*100)+'% horde size · '+Math.round(forecast.speed*100)+'% speed · '+Math.round(forecast.siege*100)+'% gate pressure. 5 quiet seconds skips the wait.';
+ $('nextWave').textContent=phase==='lost'?'MISSION FAILED':phase==='planning'?'Awaiting outbreak':endlessMode?(queuedZombies()?'∞ '+fmt(queuedZombies())+' incoming':endlessIntermission>0?'RE-ARM · '+Math.ceil(endlessIntermission)+'s':zombies.length===0?'∞ WAVE '+(endlessWave+1)+' READY':'∞ WAVE '+endlessWave+' · '+Math.max(0,Math.ceil(endlessNextAt-time))+'s'):queuedZombies()?'Incoming '+fmt(queuedZombies()):spawnedWaves===scenarioAt().waves.length?'All surges launched':zombies.length===0?'Quiet '+Math.max(0,5-quietClock).toFixed(1)+'s':Math.max(0,Math.ceil(waveNext-time))+'s / scheduled';
+ const forecast=threatDirector();$('waveDetail').textContent=phase==='lost'?'No civilians survived. Restore from the most recent checkpoint.':endlessMode?(endlessIntermission>0?'∞ WAVE '+endlessWave+' CLEARED · '+Math.ceil(endlessIntermission)+'s re-arm window.':'∞ WAVE '+endlessWave+' · RECORD '+endlessBest+' · rising pressure '+forecast.pressure.toFixed(2)+'×. Incoming infected pace themselves as local horde load grows.'):(spawnedWaves===scenarioAt().waves.length?'Final surge underway. Clear every infected to win.':'CAMPAIGN '+campaignThreat.carry.toFixed(2)+'× · NEXT: '+Math.round(forecast.count*100)+'% horde size · '+Math.round(forecast.speed*100)+'% speed · '+Math.round(forecast.siege*100)+'% gate pressure. 5 quiet seconds skips the wait.');
  $('money').textContent='$'+fmt(budget);$('alive').textContent=fmt(aliveCount);$('infected').textContent=fmt(zombies.length);$('saved').textContent=fmt(aliveCount)+' / '+fmt(initialPopulation);$('timer').textContent=ftime(time);$('savedPct').textContent=pct+'%';$('saveBar').style.width=pct+'%';$('integrityPct').textContent=safeIntegrity+'%';$('integrityBar').style.width=safeIntegrity+'%';$('sitrep').textContent=phase==='planning'?'Origin hidden. Snap shelters to the grid; gates only work alongside roads.':phase==='live'?(endlessMode?'Endless Wave '+endlessWave+'. Protect the '+fmt(aliveCount)+' survivors.':'Emergency response active. '+fmt(lost)+' civilians have been infected.'):phase==='paused'?'Operations temporarily paused.':phase==='lost'?'NO SURVIVORS — district lost.':'Scenario completed.';
  const enough=aliveCount>0,endwaves=spawnedWaves===scenarioAt().waves.length;
  const queued=queuedZombies(),objectiveMarkup='<div class="objective '+(zones.length?'done':'')+'"><span class="check">'+(zones.length?'✓':'·')+'</span>Establish a walled safe zone<strong>'+zones.length+'</strong></div><div class="objective '+(enough?'done':'')+'"><span class="check">'+(enough?'✓':'·')+'</span>Survivors remaining<strong>'+fmt(aliveCount)+'/'+fmt(initialPopulation)+'</strong></div><div class="objective '+(rescued>0?'done':'')+'"><span class="check">'+(rescued>0?'✓':'·')+'</span>Currently sheltered<strong>'+fmt(rescued)+'</strong></div><div class="objective '+(endwaves&&zombies.length===0&&!queued?'done':'')+'"><span class="check">'+(endlessMode?'∞':endwaves&&zombies.length===0&&!queued?'✓':'·')+'</span>'+(endlessMode?'Survive endless waves':'Neutralize EVERY infected after ALL waves')+'<strong>'+fmt(zombies.length)+(queued?' + '+fmt(queued)+' incoming':'')+' · '+(endlessMode?'∞ '+endlessWave+' waves':spawnedWaves+'/'+scenarioAt().waves.length+' waves')+'</strong></div>';
@@ -2329,7 +2378,7 @@ function renderSelected(){const target=$('unitInspector');if(!selected){target.i
  let html='<div class="unit-icon">'+icon+'</div><div class="unit-name">'+name+'</div><div class="unit-desc">'+(u.type==='zone'?'Shelter walls encircle residents. Gates process 180 people per second. Waiting crowds gather visibly outside each entrance; add gates to clear queues.':u.type==='gate'?'Civilian crowds gather outside this roadside gate when admission slows. Reinforce gate health; build another entrance to increase throughput beyond 180 people/s.':u.type==='wall'?'Barricade section '+(u.section||1)+' / '+(u.sectionCount||1)+'. Each section has its own HP; breaking one does not destroy the others.':u.type==='bridge'?'Airstrikes and mortar shells can disable this bridge, cutting off the ground crossing.':u.type==='garrison'?'Recruiting barracks. Produces independent mobile soldiers that hunt zombies; upgrades speed recruitment and raise the squad limit.':u.recruited?'Mobile garrison recruit. Automatically searches for zombie concentrations.':'Automated response unit deployed on the district map.')+'</div>';
  html+='<div class="line"><span>Integrity</span><span class="value">'+Math.ceil(u.hp)+' / '+Math.ceil(u.maxHp)+'</span></div>';
  if(u.type==='zone')html+='<div class="line"><span>Occupancy / capacity</span><span class="value">'+fmt(u.saved)+' / '+fmt(zoneCapacity(u))+'</span></div><div class="line"><span>Entrances</span><span class="value">'+gateForZone(u).length+'</span></div>';
- else if(u.type==='gate')html+='<div class="line"><span>Status</span><span class="value">'+(u.hp<=0?'BREACHED':'OPEN TO CIVILIANS')+'</span></div><div class="line"><span>Armor level</span><span class="value">'+(u.level||1)+' / 5</span></div><div class="line"><span>Entry rate</span><span class="value">'+GATE_FLOW_RATE+' people/s</span></div><div class="line"><span>Waiting nearby</span><span class="value">'+fmt(u.waiting||0)+'</span></div><div class="line"><span>Admitted</span><span class="value">'+fmt(u.entered||0)+'</span></div>'+(u.level<5?'<button class="panel-btn" id="upgradeBtn">↑ REINFORCE GATE — $'+gateUpgradeCost(u)+'</button>':'');
+ else if(u.type==='gate')html+='<div class="line"><span>Status</span><span class="value">'+(u.hp<=0?'BREACHED':'OPEN TO CIVILIANS')+'</span></div><div class="line"><span>Armor level</span><span class="value">'+(u.level||1)+' / '+MAX_GATE_LEVEL+'</span></div><div class="line"><span>Entry rate</span><span class="value">'+fmt(gateFlowRate(u))+' people/s</span></div><div class="line"><span>Waiting nearby</span><span class="value">'+fmt(u.waiting||0)+'</span></div><div class="line"><span>Admitted</span><span class="value">'+fmt(u.entered||0)+'</span></div>'+((u.level||1)<MAX_GATE_LEVEL?'<button class="panel-btn" id="upgradeBtn">↑ REINFORCE + FLOW — $'+gateUpgradeCost(u)+'</button>':'');
  else if(u.type==='bridge')html+='<div class="line"><span>Crossing</span><span class="value">'+(u.hp>0?'OPEN':'DESTROYED')+'</span></div>';
  else if(u.type==='wall')html+='<div class="line"><span>Barrier length</span><span class="value">'+Math.round(Math.hypot(u.bx-u.ax,u.by-u.ay))+'m</span></div>';
  else{
@@ -2351,12 +2400,12 @@ function upgradeCost(u){return Math.ceil((u.price*.64*u.level)/5)*5}
 function upgradeSelected(){
  if(!selected)return;
  if(selected.type==='gate'){
-  const g=selected;if((g.level||1)>=5)return;const cost=gateUpgradeCost(g);
+  const g=selected;if((g.level||1)>=MAX_GATE_LEVEL)return;const cost=gateUpgradeCost(g);
   if(budget<cost){notify('Not enough funds to reinforce gate.',true);return}
   budget-=cost;g.level=(g.level||1)+1;
   const added=180+g.level*40;g.maxHp+=added;g.hp=Math.min(g.maxHp,g.hp+added);
-  log('Shelter gate reinforced to level '+g.level+' ('+Math.ceil(g.hp)+' / '+g.maxHp+' HP).');
-  notify('GATE REINFORCED · LV '+g.level);renderUI(true);saveCampaign();effectSound('deploy');return
+  log('Shelter gate reinforced to level '+g.level+' · '+fmt(gateFlowRate(g))+' people/s intake.');
+  notify('GATE REINFORCED · '+fmt(gateFlowRate(g))+' PEOPLE/S');renderUI(true);saveCampaign();effectSound('deploy');return
  }
  if(!selected.level||selected.level>=4||selected.recruited)return;
  const cost=upgradeCost(selected);if(budget<cost){notify('Not enough funds to upgrade.',true);return}
@@ -2368,30 +2417,35 @@ function refundSelected(){if(!selected)return;const u=selected;budget+=Math.floo
 function findSelected(p){const find=defenses.find(d=>Math.hypot(d.x-p.x,d.y-p.y)<23),gate=gates.find(g=>Math.hypot(g.x-p.x,g.y-p.y)<20),wall=walls.find(w=>w.hp>0&&distanceToLine(p.x,p.y,w.ax,w.ay,w.bx,w.by)<12),bridge=bridges.find(b=>hitRectPoint(p.x,p.y,b)),zone=zones.find(z=>isInZone(p.x,p.y,z));return find||gate||wall||bridge||zone||null}
 function mapPointer(e){const r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;return{x,y}}
 const touchPoints=new Map();let touchGesture=null,pinch=null;
+const aimsWithDrag=id=>!!unitSpec(id)?.arc&&unitSpec(id).arc<TAU-.001;
 function handlePlacement(x,y,screenPoint=null){if(!toolId&&screenPoint){const roofUnit=projectedUnitPick(screenPoint.x,screenPoint.y);if(roofUnit){selected=roofUnit;renderUI(true);return}}
- if(screenPoint&&['garrison','sniper','turret','mortar','beacon'].includes(toolId)){const roof=rooftopPick(screenPoint.x,screenPoint.y);if(roof){x=roof.x;y=roof.y}}
+ if(screenPoint&&['garrison','sniper','turret','mortar','beacon','machinegun'].includes(toolId)){const roof=rooftopPick(screenPoint.x,screenPoint.y);if(roof){x=roof.x;y=roof.y}}
  if(toolId==='zone')addPolyVertex(x,y);else if(toolId==='strafe')notify('Drag from the start to the end of the line airstrike.',true);else if(supports.some(s=>s.id===toolId))sendSupport(toolId,x,y);else if(toolId==='gate')addGate(x,y);else if(toolId)addDefense(toolId,x,y);else{selected=findSelected({x,y});renderUI(true)}}
+function commitAimedDefense(d){let x=d.start.x,y=d.start.y;if(['garrison','sniper','turret','mortar','beacon','machinegun'].includes(d.id)&&d.screenStart){const roof=rooftopPick(d.screenStart.x,d.screenStart.y);if(roof){x=roof.x;y=roof.y}}
+ const rotation=Math.hypot(d.cur.x-d.start.x,d.cur.y-d.start.y)>7?Math.atan2(d.cur.y-y,d.cur.x-x):0;addDefense(d.id,x,y,false,rotation)}
 function panStart(e,m){mouse.pan=true;mouse.px=m.x;mouse.py=m.y;canvas.classList.add('panning');canvas.setPointerCapture?.(e.pointerId)}
+function orbitStart(e,m){mouse.orbit=true;mouse.px=m.x;mouse.py=m.y;canvas.classList.add('panning');canvas.setPointerCapture?.(e.pointerId)}
 canvas.addEventListener('pointerdown',e=>{if(!$('introOverlay').classList.contains('hidden')||!$('modalOverlay').classList.contains('hidden'))return;const m=mapPointer(e),w=screenToWorld(m.x,m.y);mouse={...mouse,...m,wx:w.x,wy:w.y,down:true};canvas.setPointerCapture?.(e.pointerId);
  if(e.pointerType==='touch'||e.pointerType==='pen'){
    touchPoints.set(e.pointerId,m);
    if(touchPoints.size===2){const [a,b]=Array.from(touchPoints.values());const mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};pinch={startDist:Math.max(15,Math.hypot(a.x-b.x,a.y-b.y)),zoom:cam.zoom,world:screenToWorld(mid.x,mid.y)};touchGesture=null;drag=null;mouse.pan=false;return}
    if(touchPoints.size>2)return;
    touchGesture={id:e.pointerId,x:m.x,y:m.y,lastX:m.x,lastY:m.y,world:w,moved:false,tool:toolId};
-   if(['wall','strafe'].includes(toolId))drag={type:toolId,start:w,cur:w};return;
+   if(['wall','strafe'].includes(toolId))drag={type:toolId,start:w,cur:w};else if(aimsWithDrag(toolId))drag={type:'aim',id:toolId,start:w,cur:w,screenStart:m};return;
  }
- if(e.button===1||e.button===2||e.shiftKey){panStart(e,m);return}if(e.button!==0)return;
- if(['wall','strafe'].includes(toolId)){drag={type:toolId,start:w,cur:w};return}handlePlacement(w.x,w.y,m)
+ if(e.button===2){orbitStart(e,m);return}if(e.button===1||e.shiftKey){panStart(e,m);return}if(e.button!==0)return;
+ if(['wall','strafe'].includes(toolId)){drag={type:toolId,start:w,cur:w};return}if(aimsWithDrag(toolId)){drag={type:'aim',id:toolId,start:w,cur:w,screenStart:m};return}handlePlacement(w.x,w.y,m)
 });
 canvas.addEventListener('pointermove',e=>{const m=mapPointer(e);mouse.x=m.x;mouse.y=m.y;const w=screenToWorld(m.x,m.y);mouse.wx=w.x;mouse.wy=w.y;
  if(touchPoints.has(e.pointerId)){
    touchPoints.set(e.pointerId,m);
-   if(pinch&&touchPoints.size>=2){const [a,b]=Array.from(touchPoints.values());const mx=(a.x+b.x)/2,my=(a.y+b.y)/2,d=Math.max(15,Math.hypot(a.x-b.x,a.y-b.y));markZoomMoving();cam.zoom=clamp(pinch.zoom*d/pinch.startDist,isNYC()?NYC_MIN_ZOOM:.24,2.3);const q=screenToWorld(mx,my);cam.x+=pinch.world.x-q.x;cam.y+=pinch.world.y-q.y;clampCamera();return}
+   if(pinch&&touchPoints.size>=2){const [a,b]=Array.from(touchPoints.values());const mx=(a.x+b.x)/2,my=(a.y+b.y)/2,d=Math.max(15,Math.hypot(a.x-b.x,a.y-b.y));markZoomMoving();cam.zoom=clamp(pinch.zoom*d/pinch.startDist,NYC_MIN_ZOOM,2.3);const q=screenToWorld(mx,my);cam.x+=pinch.world.x-q.x;cam.y+=pinch.world.y-q.y;clampCamera();return}
    if(touchGesture&&touchGesture.id===e.pointerId){let g=touchGesture,dx=m.x-g.lastX,dy=m.y-g.lastY;g.moved=g.moved||Math.hypot(m.x-g.x,m.y-g.y)>9;
-    if(!toolId||!['zone','wall','strafe'].includes(toolId)){if(g.moved){shiftCameraScreen(dx,dy)}}
+    if(!toolId||!['zone','wall','strafe'].includes(toolId)&&!aimsWithDrag(toolId)){if(g.moved){shiftCameraScreen(dx,dy)}}
     else if(drag)drag.cur=w;
     g.lastX=m.x;g.lastY=m.y;return}
  }
+ if(mouse.orbit){camera3D.yaw+=clamp(m.x-mouse.px,-42,42)*.012;camera3D.tilt=clamp(camera3D.tilt+clamp(m.y-mouse.py,-42,42)*.008,.58,1.54);mouse.px=m.x;mouse.py=m.y;markZoomMoving();return}
  if(mouse.pan){shiftCameraScreen(m.x-mouse.px,m.y-mouse.py);mouse.px=m.x;mouse.py=m.y}
  if(drag)drag.cur=w
 });
@@ -2400,14 +2454,15 @@ canvas.addEventListener('pointerup',e=>{
   touchPoints.delete(e.pointerId);
   if(pinch){if(touchPoints.size<2){pinch=null;touchGesture=null;drag=null}return}
   if(touchGesture&&touchGesture.id===e.pointerId){const g=touchGesture;touchGesture=null;
-   if(drag){const d=drag;drag=null;if(g.moved&&Math.hypot(d.cur.x-d.start.x,d.cur.y-d.start.y)>23){if(d.type==='zone')addZone(rectFrom(d.start,d.cur));else if(d.type==='wall')addWall(d.start,d.cur);else commitStrafe(d)}else notify(d.type==='strafe'?'Drag to aim the line airstrike.':'Drag on the map to size '+(d.type==='zone'?'a shelter.':'a barricade.'));}
+  if(drag){const d=drag;drag=null;if(d.type==='aim')commitAimedDefense(d);else if(g.moved&&Math.hypot(d.cur.x-d.start.x,d.cur.y-d.start.y)>23){if(d.type==='zone')addZone(rectFrom(d.start,d.cur));else if(d.type==='wall')addWall(d.start,d.cur);else commitStrafe(d)}else notify(d.type==='strafe'?'Drag to aim the line airstrike.':'Drag on the map to size '+(d.type==='zone'?'a shelter.':'a barricade.'));}
    else if(!g.moved)handlePlacement(g.world.x,g.world.y,{x:g.x,y:g.y})
   }mouse.down=false;return
  }
+ if(mouse.orbit){mouse.orbit=false;mouse.down=false;canvas.classList.remove('panning');return}
  if(mouse.pan){mouse.pan=false;mouse.down=false;canvas.classList.remove('panning');return}
- if(drag){const d=drag;drag=null;if(d.type==='zone')addZone(rectFrom(d.start,d.cur));else if(d.type==='wall')addWall(d.start,d.cur);else commitStrafe(d)}mouse.down=false
+ if(drag){const d=drag;drag=null;if(d.type==='aim')commitAimedDefense(d);else if(d.type==='zone')addZone(rectFrom(d.start,d.cur));else if(d.type==='wall')addWall(d.start,d.cur);else commitStrafe(d)}mouse.down=false
 });
-canvas.addEventListener('pointercancel',e=>{touchPoints.delete(e.pointerId);touchGesture=null;pinch=null;mouse.pan=false;mouse.down=false;drag=null;canvas.classList.remove('panning')});
+canvas.addEventListener('pointercancel',e=>{touchPoints.delete(e.pointerId);touchGesture=null;pinch=null;mouse.pan=false;mouse.orbit=false;mouse.down=false;drag=null;canvas.classList.remove('panning')});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());canvas.addEventListener('wheel',e=>{e.preventDefault();const m=mapPointer(e);zoomAt(e.deltaY,m.x,m.y)},{passive:false});
 mini.addEventListener('pointerdown',e=>{let r=mini.getBoundingClientRect();centerCamera((e.clientX-r.left)/r.width*W,(e.clientY-r.top)/r.height*H)});
 function showHelp(){let content='<div class="eyebrow">OPERATIONS MANUAL / QUICK REFERENCE</div><h1>HOW TO <span>PLAY</span></h1><p>Select a map from the campaign menu. The New York City choice uses a near-1:1-scale, 20-stage five-borough map with shoreline-based terrain and bridge crossings; each borough unlocks over four stages; locked boroughs remain visible in grayscale. Tap the minimap to jump across NYC. The city uses stylized polygon buildings. Borough coastlines and streets are simplified rather than exact real-world building locations. Use SAVE or LOAD in the deployment panel to store and restore your exact current operation in three browser-local slots. Active outbreaks resume paused. Campaign levels retain permanent shelters, gates, defenses, tanks, upgrades and unspent funding, while soldiers and emergency responders withdraw at the end of each level. Completing the last stage unlocks an optional Endless Mode on the final city: survive unlimited waves, growing threat, and earn funds for each clear. A between-wave checkpoint saves your defenses and surviving population. New zombie surges never spawn inside an active safe zone. Shelter gates cost $110 and admit up to 180 people per second and can be upgraded for more health; overflow civilians wait outside or use other gates. Shelters are cheaper, snap to a 24m grid, and attach to neighboring shelter corners, and have generous capacity; gates cost $110 and must face an adjacent road. Barricades can extend any distance at a length-based price, and split into individual breakable sections. Turrets, lookouts, barracks, beacons and mortars can attach to rooftops by tapping buildings. Garrisons slowly recruit limited mobile ground soldiers during outbreaks, and upgrades improve capacity and recruitment rate. Recruits and emergency soldiers demobilize at the end of each level; tanks and other permanent defenses carry forward. Evacuation beacons are now $65 with a 420m range. Heavy explosions may collapse buildings onto infected. The expanding 3D metropolis has bridges that air support can disable. Rotate the 3D camera for a different angle. Fragile zombies still fall to one shot, but the saved campaign threat escalates between levels and the adaptive director grows waves, movement speed and siege damage in response to civilians staying alive and successful eliminations. Five quiet seconds automatically launch the next surge, including in Endless Mode. Every civilian alive counts toward the saved population, whether inside or outside a safe zone. You lose if all civilians die. Weighted moving civilian groups track populations up to 220,000 on standard maps and 1.1 million on NYC, without simulating every person individually. They move faster than civilians but no longer sprint impossibly fast. Sound starts on after your first interaction.</p><div class="cards"><div class="info-card"><b>DEFENSE / PLANNING</b><p>Safe zones: tap multiple vertices, FINISH or tap first corner to close, UNDO to edit. Gates work along road-facing polygon edges. 1 Garrison (recruits temporary soldiers) · 2 Lookout · 3 Turret · 4 Mortar · 5 Safe zone (drag) · 6 Evacuation beacon ($65; 420m) · 7 Barricade (drag) · 8 Gate (tap wall) · 9 Tank · 0 Patrol helicopter. Tanks deploy instantly in planning, and are airdropped mid-outbreak. Battleships deploy only on waterways and automatically bombard distant hordes.</p></div><div class="info-card"><b>DEFENSE / OUTBREAK</b><p>During outbreaks, Garrison, Lookout, Patrol Helicopter, and Tank are available under Defense. Tanks are delivered by transport plane with an arrival delay and cooldown; tanks and defensive helicopters carry between stages.</p></div><div class="info-card"><b>EMERGENCY RESPONSE</b><p>F Ground squad · Q Airstrike · E Aimable line airstrike (drag to aim) · R Paratroopers · H Attack helicopter. Emergency ground squads, paratroopers and attack helicopters are temporary and do not carry into the next stage. The attack helicopter also withdraws when the area is cleared. Emergency tools automatically deselect after a successful request. The extended line airstrike costs $540 and shows its coverage while aiming.</p></div><div class="info-card"><b>MOBILE & DESKTOP</b><p>Mobile: TOOLS and INTEL panels; drag to aim line airstrikes, one-finger pan, pinch zoom, tap to place, drag to build zones and barriers, ⟳ 3D to orbit. Desktop: G start, V toggle projected weapon ranges, Space pause, WASD pan, wheel zoom, right-drag pan, [ / ] rotate camera. Mobile: RNG toggles ranges.</p></div></div><div class="buttons"><button id="closeHelp">BACK TO MAP →</button></div>';$('modalContent').innerHTML=content;$('modalOverlay').classList.remove('hidden');closeDrawers();$('closeHelp').onclick=()=>$('modalOverlay').classList.add('hidden')}
@@ -2430,13 +2485,13 @@ function fullState(){return{version:1,mapId:activeMap,stage:scenarioIndex,layout
  phase:slotReturnPhase||phase,prevPhase,time,speed,budget,initialPopulation,rescued,lost,neutralized,spawnedWaves,
  people,zombies,buildings,bridges,defenses,zones,gates,walls,shells,effects,tracers,flares,aircraft,parachutes,arrivals,feed,outbreak,pendingSurges,fallingBuildings,
  unitId,enemyId,zeroTime,quietClock,spawnCooldowns,zombieSpawnCarry,zombieSliceTick,civilianSliceTick,populationCull,hordeClock,humanSearchClock,campaignThreat,threatProfile,lastWaveInfo,
- endlessMode,endlessWave,endlessPressure,endlessAwardedWave,endlessNextAt,cam:{...cam},camera3D:{...camera3D},showRanges,soundEnabled}}
+ endlessMode,endlessWave,endlessPressure,endlessAwardedWave,endlessNextAt,endlessIntermission,cam:{...cam},camera3D:{...camera3D},showRanges,soundEnabled}}
 async function restoreFull(d){$('reviewControls').classList.add('hidden');if(!d||d.version!==1||!Number.isInteger(d.stage)||d.stage<0||d.stage>=(d.mapId==='nyc'?20:scenarios.length)||!Array.isArray(d.people)||!Array.isArray(d.zombies)||!Array.isArray(d.zones)||!Array.isArray(d.buildings))throw Error('Incompatible save');
  await reset(d.mapId==='nyc'&&d.layout?.mapVersion===5?Math.min(19,d.stage*4+3):d.stage,{load:d.layout,skipSave:true});
  // Keep the full, grayscaled NYC scenery when opening older manual saves;
  // old files only serialized the currently unlocked boroughs.
  const futureCityBuildings=buildings.filter(b=>b.locked);
- ({time,speed,budget,initialPopulation,rescued,lost,neutralized,spawnedWaves,people,zombies,buildings,bridges,defenses,zones,gates,walls,shells,effects,tracers,flares,aircraft,parachutes,arrivals,feed,outbreak,pendingSurges,fallingBuildings,unitId,enemyId,zeroTime,quietClock,spawnCooldowns,zombieSpawnCarry,zombieSliceTick,civilianSliceTick,populationCull,hordeClock,humanSearchClock,campaignThreat,threatProfile,lastWaveInfo,endlessMode,endlessWave,endlessPressure,endlessAwardedWave,endlessNextAt}=d);
+ ({time,speed,budget,initialPopulation,rescued,lost,neutralized,spawnedWaves,people,zombies,buildings,bridges,defenses,zones,gates,walls,shells,effects,tracers,flares,aircraft,parachutes,arrivals,feed,outbreak,pendingSurges,fallingBuildings,unitId,enemyId,zeroTime,quietClock,spawnCooldowns,zombieSpawnCarry,zombieSliceTick,civilianSliceTick,populationCull,hordeClock,humanSearchClock,campaignThreat,threatProfile,lastWaveInfo,endlessMode,endlessWave,endlessPressure,endlessAwardedWave,endlessNextAt,endlessIntermission=0}=d);
  // An older megascale manual save can contain agents/buildings within the
  // newly corrected East River corridor. Preserve the save but move those agents
  // back to land and remove invalid riverbed building footprints.
