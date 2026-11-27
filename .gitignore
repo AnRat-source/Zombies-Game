@@ -1,0 +1,3 @@
+# Local build products and retained source art are not shipped by the static app.
+/wasm/target/
+/assets/icons/cityfall-icon-source.png

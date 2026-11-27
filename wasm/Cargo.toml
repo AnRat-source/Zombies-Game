@@ -7,4 +7,3 @@ license = "MIT"
 
 [lib]
 crate-type = ["cdylib"]
-
