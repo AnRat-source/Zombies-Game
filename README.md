@@ -20,11 +20,19 @@ For local previews: `python -m http.server 8000` in this folder, then visit `htt
 - **Non-rectangular buildings:** a mixture of rectangular and six-sided, notched buildings extruded into flat-roofed 3D polygon meshes. Their collision checks use the polygon itself rather than an invisible rectangular barrier.
 - **Full site folder:** HTML, stylesheet, game script and polygon-mesh code are separate, so GitHub Pages hosting and future updates are simpler.
 
-## New York reference map
+## Offline blue-city skyline
 
-The current New York campaign asynchronously loads the standard **OpenStreetMap** tile layer for ground reference. This adds current streets and building footprints while keeping the game playable offline: failed or unavailable tile requests fall back to the bundled procedural terrain. The map displays the required [© OpenStreetMap contributors attribution](https://www.openstreetmap.org/copyright); production deployments should use a tile provider appropriate to their expected traffic.
+New York no longer loads a map, map tile, or remote ground texture. It uses a fully offline blue tactical surface with game-authored coastlines, waterways, streets, and blocks. Major skyline towers are individually defined buildings: One World Trade Center, the World Trade complex, Empire State, Chrysler, One Vanderbilt, Central Park Tower, Hudson Yards, Downtown Brooklyn, Long Island City, and more. They are real 3D game objects, so they participate in the existing roof placement, damage, collapse, and chain-topple systems.
 
-3D structures remain optimized game geometry. High-rise density is concentrated around Lower Manhattan, Midtown, Hudson Yards, Downtown Brooklyn, and Long Island City, but individual extrusions are not yet an import of the official building-footprint/height data.
+The lower city remains deliberately stylized and procedural for mobile performance; landmark tower placement is explicit rather than imported from mapping data.
+
+## Installable mobile app
+
+The site includes `manifest.webmanifest`, an offline service worker, install metadata, 180/192/512 PNG icons, and a Windows `.ico`. On Android/desktop browsers that expose the install prompt, the **INSTALL** button appears in the header. On iOS, use Safari's **Share → Add to Home Screen**. The first online visit caches the application shell for offline launch.
+
+## Rust/WebAssembly acceleration
+
+`wasm/` holds a Rust `wasm-bindgen` module for horde-density aggregation. The browser continues to use its proven JavaScript fallback until a release has generated and deployed `wasm/pkg/`. See [`wasm/README.md`](wasm/README.md) for the build command. Canvas, WebGL rendering, and browser input remain JavaScript because those APIs are browser-native; the numerically repetitive aggregation runs in Rust/WASM when available.
 
 ## Why the buildings are stylized
 
@@ -37,6 +45,12 @@ index.html
 assets/style.css
 assets/polygon-mesh.js
 assets/game.js
+assets/app-install.js
+assets/wasm-sim.js
+assets/icons/
+manifest.webmanifest
+service-worker.js
+wasm/
 .github/workflows/pages.yml
 README.md
 ```

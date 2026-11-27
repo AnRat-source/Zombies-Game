@@ -3,6 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#102735" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="assets/icons/cityfall.ico" sizes="any" />
+<link rel="apple-touch-icon" href="assets/icons/cityfall-180.png" />
 <title>OUTBREAK / CITYFALL — Siege & Skyline 3D</title>
 <link rel="stylesheet" href="assets/style.css">
 </head>
@@ -17,7 +24,7 @@
     <div class="stat"><span class="lbl">SAVED / TOTAL</span><strong id="saved">—</strong></div>
     <div class="stat"><span class="lbl">ELAPSED</span><strong id="timer">00:00</strong></div>
   </div>
-  <div class="head-actions"><button class="small-button" id="soundBtn" title="Toggle synthesized game audio">◖ SOUND ON</button><button class="small-button" id="helpBtn">? HELP</button><button class="small-button" id="saveGameBtn">SAVE</button><button class="small-button" id="loadGameBtn">LOAD</button><button class="small-button" id="mapsBtn">MAPS</button><button class="small-button" id="overviewBtn" title="See the whole New York region">CITY VIEW</button><button class="small-button" id="resetBtn">↻ RESTART</button></div>
+  <div class="head-actions"><button class="small-button" id="installBtn" hidden title="Install Cityfall on this device">⇩ INSTALL</button><button class="small-button" id="soundBtn" title="Toggle synthesized game audio">◖ SOUND ON</button><button class="small-button" id="helpBtn">? HELP</button><button class="small-button" id="saveGameBtn">SAVE</button><button class="small-button" id="loadGameBtn">LOAD</button><button class="small-button" id="mapsBtn">MAPS</button><button class="small-button" id="overviewBtn" title="See the whole New York region">CITY VIEW</button><button class="small-button" id="resetBtn">↻ RESTART</button></div>
 </header>
 <div class="layout">
   <aside class="sidebar" id="sidebar">
@@ -29,7 +36,6 @@
   </aside>
   <main id="mapPane">
     <canvas id="gameCanvas" aria-label="Tactical city map"></canvas>
-    <a id="mapAttribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a>
     <div id="mobileBackdrop"></div>
     <nav id="mobileDock" aria-label="Mobile simulation controls"><button id="mobileToolsBtn">☰ TOOLS</button><button id="mobileIntelBtn">◫ INTEL</button><button id="mobilePanBtn" class="active">✥ PAN</button><button id="mobileZoomOut" aria-label="Zoom out">−</button><button id="mobileZoomIn" aria-label="Zoom in">＋</button><button id="mobileSoundBtn">♫ ON</button><button id="mobileOrbitBtn" title="Rotate 3D camera">⟳ 3D</button><button id="mobileRangeBtn" title="Toggle 3D unit ranges">◎ RNG</button></nav>
     <button class="mobile-toggle" id="mobileToggle">☰ DEPLOY</button>
@@ -47,6 +53,8 @@
 </div>
 </div>
 <script src="assets/polygon-mesh.js" defer></script>
+<script src="assets/wasm-sim.js" defer></script>
+<script src="assets/app-install.js" defer></script>
 <script src="assets/game.js" defer></script>
 </body>
 </html>

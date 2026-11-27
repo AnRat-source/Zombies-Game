@@ -1,0 +1,10 @@
+[package]
+name = "cityfall_wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Hot-path crowd aggregation for OUTBREAK / CITYFALL"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
