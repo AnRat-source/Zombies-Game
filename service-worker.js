@@ -1,4 +1,4 @@
-const CACHE='cityfall-static-v6';
+const CACHE='cityfall-static-v7';
 const APP_SHELL=['./','./index.html','./manifest.webmanifest','./assets/style.css','./assets/game.js','./assets/polygon-mesh.js','./assets/wasm-sim.js','./assets/nyc-shore-data.js','./assets/nyc-road-data.js','./assets/app-install.js','./assets/icons/cityfall-siege-192.png','./assets/icons/cityfall-siege-512.png','./assets/icons/cityfall-siege-180.png','./assets/icons/cityfall-siege.ico','./wasm/pkg/cityfall_wasm_bg.wasm'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(APP_SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
