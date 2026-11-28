@@ -22,9 +22,9 @@ For local previews: `python -m http.server 8000` in this folder, then visit `htt
 
 ## Offline blue-city skyline
 
-New York no longer loads a map, map tile, or remote ground texture. It uses a fully offline blue tactical surface with game-authored coastlines and waterways. Manhattan street geometry is bundled from the official NYC Street Centerline (CSCL) release: the game uses its centerlines to draw streets and to keep generated building footprints inside real street-defined blocks. Major skyline towers are individually defined buildings: One World Trade Center, the World Trade complex, Empire State, Chrysler, One Vanderbilt, Central Park Tower, Hudson Yards, Downtown Brooklyn, Long Island City, and more. They are real 3D game objects, so they participate in the existing roof placement, damage, collapse, and chain-topple systems.
+New York no longer loads a map, map tile, or remote ground texture. It uses a fully offline blue tactical surface with official NYC Department of City Planning borough-boundary vectors for its coastline. Manhattan street geometry is bundled from the official NYC Street Centerline (CSCL) release: the game uses its centerlines to draw streets and to keep generated building footprints inside real street-defined blocks. Major skyline towers are individually defined buildings: One World Trade Center, the World Trade complex, Empire State, Chrysler, One Vanderbilt, Central Park Tower, Hudson Yards, Downtown Brooklyn, Long Island City, and more. They are real 3D game objects, so they participate in the existing roof placement, damage, collapse, and chain-topple systems.
 
-The lower city remains deliberately stylized and procedural for mobile performance; landmarks are explicit game objects rather than imported building footprints. The source road layer is stored in `assets/nyc-road-data.js`, regenerated with `scripts/build-nyc-road-data.mjs` from the NYC Open Data CSCL GeoJSON export.
+The lower city remains deliberately stylized and procedural for mobile performance; landmarks are explicit game objects rather than imported building footprints. The source road layer is stored in `assets/nyc-road-data.js`, regenerated with `scripts/build-nyc-road-data.mjs` from the NYC Open Data CSCL GeoJSON export. The vector coastline is stored in `assets/nyc-shore-data.js`, regenerated with `scripts/build-nyc-shore-data.mjs` from NYC Open Data Borough Boundaries.
 
 ## Installable mobile app
 
@@ -48,7 +48,9 @@ assets/game.js
 assets/app-install.js
 assets/wasm-sim.js
 assets/nyc-road-data.js
+assets/nyc-shore-data.js
 scripts/build-nyc-road-data.mjs
+scripts/build-nyc-shore-data.mjs
 assets/icons/
 manifest.webmanifest
 service-worker.js

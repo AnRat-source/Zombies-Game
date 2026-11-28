@@ -47,7 +47,12 @@ const NYC_SHORES={
  Bronx:[[-73.936,40.874],[-73.936,40.862],[-73.923,40.838],[-73.917,40.822],[-73.891,40.804],[-73.865,40.803],[-73.849,40.818],[-73.835,40.828],[-73.804,40.823],[-73.788,40.845],[-73.774,40.863],[-73.769,40.885],[-73.788,40.902],[-73.799,40.913],[-73.833,40.915],[-73.858,40.908],[-73.881,40.909],[-73.902,40.886],[-73.922,40.882],[-73.936,40.874]],
  'Staten Island':[[-74.250,40.501],[-74.240,40.532],[-74.247,40.544],[-74.232,40.569],[-74.210,40.585],[-74.189,40.603],[-74.171,40.630],[-74.150,40.646],[-74.130,40.647],[-74.111,40.633],[-74.087,40.621],[-74.078,40.598],[-74.104,40.572],[-74.129,40.549],[-74.165,40.524],[-74.206,40.506],[-74.235,40.498],[-74.250,40.501]]
 };
-const NYC_BOROUGHS=Object.entries(NYC_SHORES).map(([name,coords])=>({name,poly:coords.map(q=>nycBaseProject(q[0],q[1]))}));
+// Current NYC DCP shoreline vectors are bundled at build time. The fallback is
+// retained only for older offline copies that do not yet have the data asset.
+const NYC_SHORE_SOURCE=window.CityfallNYCShoreData;
+const unpackShoreRing=packed=>{const scale=Number(NYC_SHORE_SOURCE?.scale)||1000000,ring=[];for(let i=0;i<packed.length;i+=2)ring.push(nycBaseProject(packed[i]/scale,packed[i+1]/scale));return ring};
+const NYC_BOROUGHS=(NYC_SHORE_SOURCE?.boroughs?.length?NYC_SHORE_SOURCE.boroughs.map(([name,packed,renderPacked])=>({name,poly:unpackShoreRing(packed),renderPoly:unpackShoreRing(renderPacked||packed),official:true})):Object.entries(NYC_SHORES).map(([name,coords])=>({name,poly:coords.map(q=>nycBaseProject(q[0],q[1])),renderPoly:coords.map(q=>nycBaseProject(q[0],q[1])),official:false})));
+const hasOfficialNYCCoast=()=>activeMap==='nyc'&&NYC_BOROUGHS.some(b=>b.official);
 // Approximate East River centerline, from the Battery past Brooklyn and Queens.
 // Subtracting this navigation/terrain corridor fixes overlapping simplified shore polygons.
 const NYC_EAST_RIVER=[
@@ -59,6 +64,7 @@ const NYC_EAST_RIVER=[
 const NYC_EAST_RIVER_WIDTH=[39,43,48,51,58,57,54,52,52,58,65,65];
 function riverDistanceSq(x,y,a,b){const dx=b.x-a.x,dy=b.y-a.y,dd=dx*dx+dy*dy||1,t=clamp((x-a.x)*dx+(y-a.y)*dy,0,dd)/dd;const px=x-a.x-t*dx,py=y-a.y-t*dy;return px*px+py*py}
 function nycEastRiverAt(x,y){
+ if(hasOfficialNYCCoast())return false;
  if(activeMap!=='nyc'&&activeMap!=='nyc_megascale')return false;
  const scale=nycScale(),bx=x/scale,by=y/scale;
  if(bx<2650||bx>4850||by<1250||by>4500)return false;
@@ -74,7 +80,7 @@ const NYC_HARLEM_RIVER=[
  [-73.936,40.806],[-73.937,40.799]
 ].map(([lon,lat])=>nycBaseProject(lon,lat));
 const NYC_HARLEM_WIDTH=[54,52,48,45,47,49,53,49,47,53,60];
-function nycHarlemRiverAt(x,y){if(!isNYC())return false;
+function nycHarlemRiverAt(x,y){if(hasOfficialNYCCoast()||!isNYC())return false;
  const sc=nycScale(),bx=x/sc,by=y/sc;
  if(bx<2850||bx>4300||by<300||by>3000)return false;
  for(let i=1;i<NYC_HARLEM_RIVER.length;i++){
@@ -87,7 +93,7 @@ const NYC_NEWTOWN_CREEK=[
  [-73.936,40.729],[-73.928,40.730],[-73.921,40.728]
 ].map(([lon,lat])=>nycBaseProject(lon,lat));
 const NYC_NEWTOWN_WIDTH=[24,27,26,25,21,23,22];
-function nycNewtownCreekAt(x,y){if(activeMap!=='nyc')return false;
+function nycNewtownCreekAt(x,y){if(hasOfficialNYCCoast()||activeMap!=='nyc')return false;
  const sc=nycScale(),bx=x/sc,by=y/sc;
  if(bx<3400||bx>4350||by<2450||by>3400)return false;
  for(let i=1;i<NYC_NEWTOWN_CREEK.length;i++)if(riverDistanceSq(bx,by,NYC_NEWTOWN_CREEK[i-1],NYC_NEWTOWN_CREEK[i])<NYC_NEWTOWN_WIDTH[i]**2)return true;
@@ -187,9 +193,9 @@ const MANHATTAN_STREET=80,MANHATTAN_AVENUE=230;
 // Central Park is visually centered inside the simplified Manhattan shoreline.
 // The city polygon is deliberately simplified, so using unadjusted real-world
 // longitude corners would put much of the park in the East River on this map.
-function manhattanLongitudeBand(lat){const poly=NYC_SHORES.Manhattan,xs=[];
- for(let i=0;i<poly.length-1;i++){const a=poly[i],b=poly[i+1];if((a[1]<=lat&&b[1]>lat)||(b[1]<=lat&&a[1]>lat))xs.push(a[0]+(b[0]-a[0])*(lat-a[1])/(b[1]-a[1]))}
- xs.sort((a,b)=>a-b);return{west:xs[0]??-73.99,east:xs.at(-1)??-73.95}}
+function manhattanLongitudeBand(lat){const poly=NYC_BOROUGHS.find(b=>b.name==='Manhattan')?.poly||[],targetY=nycBaseProject(NYC_BOUNDS.west,lat).y,xs=[];
+ for(let i=0,j=poly.length-1;i<poly.length;j=i++){const a=poly[j],b=poly[i];if((a.y<=targetY&&b.y>targetY)||(b.y<=targetY&&a.y>targetY))xs.push(a.x+(b.x-a.x)*(targetY-a.y)/(b.y-a.y))}
+ xs.sort((a,b)=>a-b);const toLon=x=>NYC_BOUNDS.west+(x-NYC_PAD)/(NYC_DIM-NYC_PAD*2)*(NYC_BOUNDS.east-NYC_BOUNDS.west);return{west:toLon(xs[0]??nycBaseProject(-73.99,lat).x),east:toLon(xs.at(-1)??nycBaseProject(-73.95,lat).x)}}
 const parkCorner=(lat,fraction)=>{const band=manhattanLongitudeBand(lat);return nycBaseProject(band.west+(band.east-band.west)*fraction,lat)};
 const CENTRAL_PARK_POLY=[parkCorner(40.7681,.30),parkCorner(40.8004,.30),parkCorner(40.7971,.70),parkCorner(40.7645,.70)];
 let manhattanRoads=[],nycRoadSegments=[],nycRoadBuckets=new Map();
@@ -209,11 +215,13 @@ function* buildOfficialManhattanRoadsSteps(){
  manhattanRoads=[];nycRoadSegments=[];nycRoadBuckets=new Map();
  const source=window.CityfallNYCRoadData;
  if(activeMap!=='nyc'||!source?.roads?.length)return false;
- const scale=Number(source.scale)||1000000,detailStride=batteryMode()?12:deviceProfile.constrained?9:6;
- let sequence=0,built=0;
+ const scale=Number(source.scale)||1000000;
+ let built=0;
  for(const [widthFeet,packed] of source.roads){
   const points=[];
   for(let i=0;i<packed.length;i+=2)points.push(nycProject(packed[i]/scale,packed[i+1]/scale));
+  let visualStart=null,visualEnd=null,visualAngle=0,visualWidth=0;
+  const flushVisual=()=>{if(!visualStart||!visualEnd)return;const length=Math.hypot(visualEnd.x-visualStart.x,visualEnd.y-visualStart.y);if(length>=2)manhattanRoads.push({x:(visualStart.x+visualEnd.x)*.5,y:(visualStart.y+visualEnd.y)*.5,w:length,h:visualWidth,angle:visualAngle});visualStart=visualEnd=null};
   for(let i=1;i<points.length;i++){
    const a=points[i-1],b=points[i],mx=(a.x+b.x)*.5,my=(a.y+b.y)*.5;
    if(!withinManhattan(mx,my))continue;
@@ -221,23 +229,26 @@ function* buildOfficialManhattanRoadsSteps(){
    const width=clamp((Number(widthFeet)||36)*.3048,5.2,32),road={ax:a.x,ay:a.y,bx:b.x,by:b.y,width,angle:Math.atan2(b.y-a.y,b.x-a.x)};
    const index=nycRoadSegments.push(road)-1,margin=width*.5+54,minX=Math.floor((Math.min(a.x,b.x)-margin)/NYC_ROAD_CELL),maxX=Math.floor((Math.max(a.x,b.x)+margin)/NYC_ROAD_CELL),minY=Math.floor((Math.min(a.y,b.y)-margin)/NYC_ROAD_CELL),maxY=Math.floor((Math.max(a.y,b.y)+margin)/NYC_ROAD_CELL);
    for(let gy=minY;gy<=maxY;gy++)for(let gx=minX;gx<=maxX;gx++){const key=roadBucketKey(gx,gy),bucket=nycRoadBuckets.get(key);if(bucket)bucket.push(index);else nycRoadBuckets.set(key,[index])}
-   // The static map carries every centerline.  The 3D road mesh keeps all wide
-   // routes plus a stable sample of local streets so older phones stay smooth.
-   if(width>=14||sequence++%detailStride===0)manhattanRoads.push({x:mx,y:my,w:length,h:width,angle:road.angle});
+   // Keep every road continuous. Collinear pieces from the same official
+   // centerline are merged before the 3D upload, so there are no random gaps.
+   const connected=visualEnd&&Math.hypot(visualEnd.x-a.x,visualEnd.y-a.y)<1.5,turn=Math.abs(Math.atan2(Math.sin(road.angle-visualAngle),Math.cos(road.angle-visualAngle)));
+   if(!connected||turn>.035){flushVisual();visualStart=a;visualAngle=road.angle;visualWidth=width}
+   visualEnd=b;
    if(++built%360===0)yield 1;
   }
+  flushVisual();
  }
  return nycRoadSegments.length>0;
 }
 function vectorBuildingClear(cx,cy,w,h,angle){
  const co=Math.cos(angle),si=Math.sin(angle),samples=[[0,0],[-w*.5,-h*.5],[w*.5,-h*.5],[w*.5,h*.5],[-w*.5,h*.5]];
  for(const [lx,ly] of samples){const x=cx+lx*co-ly*si,y=cy+lx*si+ly*co,nearest=nearestManhattanRoad(x,y);
-  if(!withinManhattan(x,y)||manhattanPark(x,y)||(nearest&&nearest.distance<nearest.road.width*.5+5))return false;
+  if(!withinManhattan(x,y)||manhattanPark(x,y)||(nearest&&nearest.distance<nearest.road.width*.5+2.5))return false;
  }
  return true;
 }
 function* buildVectorManhattanBuildings(seed){
- const box=nycBoroughBox('Manhattan'),sc=nycScale(),step=58,occupied=new Map(),cell=76;
+ const box=nycBoroughBox('Manhattan'),sc=nycScale(),step=46,occupied=new Map(),cell=68;
  const collides=(cx,cy,r)=>{const gx=Math.floor(cx/cell),gy=Math.floor(cy/cell);for(let y=gy-1;y<=gy+1;y++)for(let x=gx-1;x<=gx+1;x++)for(const other of occupied.get(roadBucketKey(x,y))||[])if(Math.hypot(cx-other.x,cy-other.y)<r+other.r)return true;return false};
  const occupy=(cx,cy,r)=>{const key=roadBucketKey(Math.floor(cx/cell),Math.floor(cy/cell)),bucket=occupied.get(key);if(bucket)bucket.push({x:cx,y:cy,r});else occupied.set(key,[{x:cx,y:cy,r}])};
  let row=0;
@@ -245,11 +256,11 @@ function* buildVectorManhattanBuildings(seed){
   for(let x=box.left*sc+step*.5,col=0;x<box.right*sc-step*.5;x+=step,col++){
    if(col%80===0)yield 1;
    const rand=rng((seed+Math.imul(row+1,104729)+Math.imul(col+1,130363))>>>0),cx=x+(rand()-.5)*15,cy=y+(rand()-.5)*15,nearest=nearestManhattanRoad(cx,cy);
-   if(!nearest||nearest.distance<nearest.road.width*.5+15||!withinManhattan(cx,cy)||manhattanPark(cx,cy))continue;
-   let w=18+rand()*18,h=17+rand()*22,angle=nearest.road.angle;
+   if(!nearest||nearest.distance<nearest.road.width*.5+8||!withinManhattan(cx,cy)||manhattanPark(cx,cy))continue;
+   let w=16+rand()*16,h=15+rand()*19,angle=nearest.road.angle;
    if(rand()<.19){w*=1.42;h*=1.12}
    if(rand()<.10)angle+=((rand()-.5)*.24);
-   const radius=Math.hypot(w,h)*.47;
+   const radius=Math.hypot(w,h)*.43;
    if(collides(cx,cy,radius)||!vectorBuildingClear(cx,cy,w,h,angle))continue;
    const bw=Math.abs(w*Math.cos(angle))+Math.abs(h*Math.sin(angle)),bh=Math.abs(w*Math.sin(angle))+Math.abs(h*Math.cos(angle));
    const district=nycPreviewBoroughAt(cx,cy);
@@ -658,7 +669,7 @@ function* makeCitySteps(){const config=MAPS[activeMap],rand=rng(config.seed);bui
  for(const b of buildings){if(b.footW){c.save();c.translate(b.cx,b.cy);c.rotate(b.angle);c.fillStyle='#6c7976';c.fillRect(-b.footW/2+3,-b.footH/2+3,b.footW,b.footH);c.fillStyle=roofs[b.roof];c.fillRect(-b.footW/2,-b.footH/2,b.footW,b.footH);c.strokeStyle='#879c9b';c.lineWidth=1.4;c.strokeRect(-b.footW/2,-b.footH/2,b.footW,b.footH);c.restore();continue}c.fillStyle='#6c7976';c.fillRect(b.x+4,b.y+5,b.w,b.h);c.fillStyle=roofs[b.roof];c.fillRect(b.x,b.y,b.w,b.h);c.strokeStyle='#8a9c9a';c.lineWidth=1.6;c.strokeRect(b.x+.7,b.y+.7,b.w-1.4,b.h-1.4);c.fillStyle='#e4e5d6';c.fillRect(b.x+4,b.y+4,b.w-8,2);c.fillStyle='#829b98';if(b.vent){c.fillRect(b.x+b.w*.24,b.y+b.h*.25,10,7);c.strokeRect(b.x+b.w*.24,b.y+b.h*.25,10,7)}if(b.solar&&b.w>34){c.fillStyle='#667e85';c.fillRect(b.x+b.w*.52,b.y+b.h*.25,Math.max(10,b.w*.24),12);c.strokeStyle='#a5c2c1';c.strokeRect(b.x+b.w*.52,b.y+b.h*.25,Math.max(10,b.w*.24),12)}if(b.w>40&&b.h>27){c.fillStyle='#9daaa4';c.fillRect(b.x+7,b.y+b.h-10,Math.min(13,b.w/5),3)}}
  if(isNYC()){
    c.restore();c.strokeStyle='#d9ddd0';c.lineWidth=3.5;c.beginPath();nycCoastPath(c,nycFullCityPreview());c.stroke();
-   drawNYCEastRiver(c);if(activeMap==='nyc'){nycRiverOverlay(c,NYC_HARLEM_RIVER,NYC_HARLEM_WIDTH);nycRiverOverlay(c,NYC_NEWTOWN_CREEK,NYC_NEWTOWN_WIDTH)}
+   if(!hasOfficialNYCCoast()){drawNYCEastRiver(c);if(activeMap==='nyc'){nycRiverOverlay(c,NYC_HARLEM_RIVER,NYC_HARLEM_WIDTH);nycRiverOverlay(c,NYC_NEWTOWN_CREEK,NYC_NEWTOWN_WIDTH)}}
  }
  // Stylized waterways and island bridges, procedurally drawn.
  for(const r of rivers){c.fillStyle='#86b3bd';c.fillRect(r.x-8,0,r.w+16,H);c.fillStyle='#6397a8';c.fillRect(r.x,0,r.w,H);
@@ -1829,6 +1840,16 @@ function lowDetailView(){
  else if(z>exit)zoomPerf.lowDetail=false;
  return zoomPerf.lowDetail;
 }
+function* buildNYCVectorLandMeshSteps(){
+ if(!hasOfficialNYCCoast()||!window.CityfallPolygonMesh)return new Float32Array();
+ const output=[],scale=nycScale(),colors={Manhattan:[.15,.35,.46],Brooklyn:[.16,.38,.48],Queens:[.19,.40,.51],Bronx:[.14,.34,.44],'Staten Island':[.17,.38,.47]};
+ for(const borough of NYC_BOROUGHS){
+  const ring=borough.renderPoly.map(p=>({x:p.x*scale,y:p.y*scale})),indices=CityfallPolygonMesh.triangulate(ring),color=nycFullCityPreview()&&!nycUnlocked(borough.name)?[.21,.35,.42]:colors[borough.name];
+  for(let i=0;i<indices.length;i+=3)for(const index of [indices[i],indices[i+1],indices[i+2]]){const point=ring[index];output.push(point.x,point.y,-3.1,...color)}
+  yield 1;
+ }
+ return new Float32Array(output);
+}
 
 function cameraFocus(){return{x:cam.x+cw/(2*cam.zoom),y:cam.y+ch/(2*cam.zoom)}}
 function project3D(x,y,z=0){
@@ -1955,9 +1976,9 @@ class CityRenderer{
  box(list,x,y,z,sx,sy,sz,color,ang=0){if(sx<=0||sy<=0||sz<=0)return;const c=this.parseColor(color);list.push(x,y,z,sx,sy,sz,c[0],c[1],c[2],ang)}
  rebuild(){for(const _ of this.rebuildSteps()){} }
  async rebuildAsync(onProgress){const gen=this.rebuildSteps();let done=false,n=0;while(!done){const until=performance.now()+7;do{const result=gen.next();done=!!result.done;n++}while(!done&&performance.now()<until);onProgress?.(n);if(!done)await nextLoadFrame()}}
- *rebuildSteps(){if(!this.ready)return;this.needsBuild=false;const a=[],box=(...v)=>this.box(a,...v);
+ *rebuildSteps(){if(!this.ready)return;this.needsBuild=false;const a=[],box=(...v)=>this.box(a,...v),vectorCoast=activeMap==='nyc'&&hasOfficialNYCCoast()&&!this.software;
   box(VIS_W/2,VIS_H/2,-10,VIS_W,VIS_H,12,isNYC()?'#143f61':'#72817c');
-  if(isNYC()){
+  if(isNYC()&&!vectorCoast){
     // Adaptive terrain: large tiles inland, progressively smaller ones at coastlines
     // and both riverbanks. This avoids floating land tiles without flooding mobile GPUs.
     const tile=96*nycScale(),colors={Manhattan:'#275a75',Brooklyn:'#2a6078',Queens:'#306781',Bronx:'#24566f','Staten Island':'#2c6178'};
@@ -1983,23 +2004,23 @@ class CityRenderer{
      box(x,y,-2.7,34*streetWidth,stride+1,2,nycFullCityPreview()&&!nycLandAt(x,y)?'#3b5665':'#45565b');box(x,y,-1.6,26*streetWidth,stride+1,1,nycFullCityPreview()&&!nycLandAt(x,y)?'#304b5a':'#394b52')}
    for(const y of YROADS)for(let x=20;x<W-20;x+=stride){if(!(nycFullCityPreview()?nycPreviewBoroughAt(x,y):nycLandAt(x,y))||(activeMap==='nyc'&&withinManhattan(x,y)))continue;
      box(x,y,-2.5,stride+1,34*streetWidth,2,nycFullCityPreview()&&!nycLandAt(x,y)?'#3b5665':'#45565b');box(x,y,-1.5,stride+1,26*streetWidth,1,nycFullCityPreview()&&!nycLandAt(x,y)?'#304b5a':'#394b52')}
-   if(activeMap==='nyc')for(const r of manhattanRoads){box(r.x,r.y,-2.4,r.w,r.h+4,2,'#4a5f64',r.angle);box(r.x,r.y,-1.35,r.w,r.h*.72,1.2,'#405358',r.angle)}
+   if(activeMap==='nyc')for(const r of manhattanRoads)box(r.x,r.y,-2.15,r.w+1,r.h+5,1.8,'#405d67',r.angle)
   }else{
   for(const x of VIS_XROADS){const future=x>W;box(x,VIS_H/2,-3.3,54,VIS_H,2,future?'#787f80':'#4c5a61');box(x,VIS_H/2,-2.2,41,VIS_H,1,future?'#6d7476':'#34434c');
    for(let y=18;y<VIS_H-12;y+=75)box(x,y,-1.46,1.8,30,.8,y>H?'#9ba0a0':'#b5b6a0')}
   for(const y of VIS_YROADS){const future=y>H;box(VIS_W/2,y,-3.1,VIS_W,54,2,future?'#787f80':'#4c5a61');box(VIS_W/2,y,-2.1,VIS_W,41,1,future?'#6d7476':'#34434c');
    for(let x=18;x<VIS_W-12;x+=75)box(x,y,-1.35,30,1.8,.8,x>W?'#9ba0a0':'#b5b6a0')}}
-  if(activeMap==='nyc'||activeMap==='nyc_megascale')for(let i=1;i<NYC_EAST_RIVER.length;i++){
+  if((activeMap==='nyc'||activeMap==='nyc_megascale')&&!hasOfficialNYCCoast())for(let i=1;i<NYC_EAST_RIVER.length;i++){
    const a=NYC_EAST_RIVER[i-1],b=NYC_EAST_RIVER[i],scale=nycScale(),dx=b.x-a.x,dy=b.y-a.y;
    const len=Math.hypot(dx,dy)*scale,angle=Math.atan2(dy,dx),midX=(a.x+b.x)*.5*scale,midY=(a.y+b.y)*.5*scale;
    box(midX,midY,-.45,len+NYC_EAST_RIVER_WIDTH[i]*scale,NYC_EAST_RIVER_WIDTH[i]*2*scale,1.6,'#39768b',angle);
   }
-  if(activeMap==='nyc')for(let i=1;i<NYC_HARLEM_RIVER.length;i++){
+  if(activeMap==='nyc'&&!hasOfficialNYCCoast())for(let i=1;i<NYC_HARLEM_RIVER.length;i++){
    const a=NYC_HARLEM_RIVER[i-1],b=NYC_HARLEM_RIVER[i],sc=nycScale(),dx=b.x-a.x,dy=b.y-a.y;
    const len=Math.hypot(dx,dy)*sc,ang=Math.atan2(dy,dx),midX=(a.x+b.x)*.5*sc,midY=(a.y+b.y)*.5*sc;
    box(midX,midY,-.45,len+NYC_HARLEM_WIDTH[i]*sc,NYC_HARLEM_WIDTH[i]*2*sc,1.6,'#39768b',ang);
   }
-  if(activeMap==='nyc')for(let i=1;i<NYC_NEWTOWN_CREEK.length;i++){
+  if(activeMap==='nyc'&&!hasOfficialNYCCoast())for(let i=1;i<NYC_NEWTOWN_CREEK.length;i++){
    const a=NYC_NEWTOWN_CREEK[i-1],b=NYC_NEWTOWN_CREEK[i],sc=nycScale(),dx=b.x-a.x,dy=b.y-a.y;
    box((a.x+b.x)*.5*sc,(a.y+b.y)*.5*sc,-.45,Math.hypot(dx,dy)*sc+NYC_NEWTOWN_WIDTH[i]*sc,NYC_NEWTOWN_WIDTH[i]*2*sc,1.6,'#39768b',Math.atan2(dy,dx));
   }
@@ -2016,7 +2037,7 @@ class CityRenderer{
    box(cx,cy,roofTop+.9,w*.58,h*.58,1.8,'#dbe3db',angle);
    if(spire)box(cx,cy,roofTop+spire*.5,2.6,2.6,spire,'#dce8e3',angle)
   };
-  const lodStride=isNYC()?(batteryMode()?7:deviceProfile.constrained?6:4):1;
+  const lodStride=activeMap==='nyc'?(batteryMode()?4:deviceProfile.constrained?3:2):isNYC()?(batteryMode()?7:deviceProfile.constrained?6:4):1;
   for(let bi=0;bi<buildings.length;bi++){if(bi%90===0)yield 1;const b=buildings[bi];if(b.collapsing||b.verts)continue;const core=buildingCoreHeight(b),h=buildingHeight(b),tower=isNYC()&&h>core+1,cx=b.cx??b.x+b.w*.5,cy=b.cy??b.y+b.h*.5,col=b.landmark?'#9fcfdb':baseColors[b.roof%baseColors.length];
    if(b.landmark||bi%lodStride===0)lodBox(cx,cy,h*.5,b.footW||b.w,b.footH||b.h,h,b.locked?'#47636d':col,b.angle||0);
    if(b.locked){box(cx,cy,h*.5,b.footW||b.w,b.footH||b.h,h,['#48636d','#536d75','#435d68','#5b737a'][b.roof%4],b.angle||0);continue}
@@ -2031,7 +2052,7 @@ class CityRenderer{
    if(b.w>30&&b.height>1){for(let k=1;k<=Math.min(5,b.height*2);k++){const zz=k*h/(Math.min(5,b.height*2)+1);
       box(cx,b.y+b.h+.15,zz,b.w*.56,.7,1.4,'#516d7b');}}
   }
-  let polygons=new Float32Array();if(window.CityfallPolygonMesh){const iterator=CityfallPolygonMesh.buildSteps(buildings);let state;do{state=iterator.next();if(!state.done)yield 1}while(!state.done);polygons=state.value||polygons}
+  let polygons=vectorCoast?(yield* buildNYCVectorLandMeshSteps()):new Float32Array();if(window.CityfallPolygonMesh){const iterator=CityfallPolygonMesh.buildSteps(buildings);let state;do{state=iterator.next();if(!state.done)yield 1}while(!state.done);const buildingPolygons=state.value||new Float32Array();if(buildingPolygons.length){const merged=new Float32Array(polygons.length+buildingPolygons.length);merged.set(polygons);merged.set(buildingPolygons,polygons.length);polygons=merged}}
   this.polyData=polygons;this.polyCount=this.polyData.length/6;yield 1;
   this.staticData=new Float32Array(a);this.staticCount=a.length/10;
   this.lodData=new Float32Array(lod);this.lodCount=lod.length/10;
