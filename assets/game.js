@@ -20,7 +20,7 @@ function batteryMode(){return settings.performance==='battery'||(settings.perfor
 function performanceScale(){return settings.performance==='quality'?1:settings.performance==='battery'?.55:deviceProfile.constrained?.58:deviceProfile.touch?.78:1}
 const MAPS={
  classic:{name:'Cityfall Classic',desc:'Original expanding city and river districts.',x:BASE_X,y:BASE_Y,seed:2109,dx:222,dy:220,park:.115},
- nyc:{name:'New York City · 1:1 Campaign',desc:'Approximately meter-scale NYC geography · Manhattan streets ~80m apart and avenues ~230m apart.',x:[],y:[],seed:71119,dx:132,dy:132,park:.075},
+ nyc:{name:'New York City · 1:1 Campaign',desc:'Approximately meter-scale NYC geography · official Manhattan street centerlines · offline five-borough campaign.',x:[],y:[],seed:71119,dx:132,dy:132,park:.075},
  nyc_megascale:{name:'New York / Previous Megascale',desc:'Original 22,080-unit world kept unchanged for older saved operations.',x:[],y:[],seed:71119,dx:132,dy:132,park:.075},
  nyc_expanded:{name:'New York / Expanded 1.6×',desc:'Previous enlarged five-borough map, retained for existing save files.',x:[],y:[],seed:71119,dx:132,dy:132,park:.075},
  nyc_standard:{name:'New York / Original Five Boroughs',desc:'Earlier five-borough scale, kept for existing saved cities.',x:[],y:[],seed:71119,dx:132,dy:132,park:.075},
@@ -149,10 +149,13 @@ const NYC_SKYSCRAPERS=[
 ];
 function addNYCSkyscrapers(){
  if(activeMap!=='nyc')return;
- const scale=nycScale(),towers=[];
+ // Coordinates use the enlarged NYC projection, but these footprint values are
+ // already metres. Scaling them a second time made landmarks several city
+ // blocks wide; preserve their real footprint and let their height sell scale.
+ const footprintScale=1.08,towers=[];
  for(const [name,lon,lat,width,depth,height,degrees] of NYC_SKYSCRAPERS){
   const p=nycProject(lon,lat);if(!nycPreviewBoroughAt(p.x,p.y))continue;
-  const w=width*scale,h=depth*scale,angle=degrees*Math.PI/180;
+  const w=width*footprintScale,h=depth*footprintScale,angle=degrees*Math.PI/180;
   towers.push({key:'LANDMARK:'+name,name,x:p.x-w*.5,y:p.y-h*.5,w,h,cx:p.x,cy:p.y,footW:w,footH:h,angle,height,roof:Math.abs(Math.round(degrees/3))%7,shade:.58,vent:false,solar:false,landmark:true,locked:!nycDistrictUnlocked(p.x,p.y,nycPreviewBoroughAt(p.x,p.y))});
  }
  // Clear only the footprint around each authored tower, leaving the surrounding
@@ -189,7 +192,80 @@ function manhattanLongitudeBand(lat){const poly=NYC_SHORES.Manhattan,xs=[];
  xs.sort((a,b)=>a-b);return{west:xs[0]??-73.99,east:xs.at(-1)??-73.95}}
 const parkCorner=(lat,fraction)=>{const band=manhattanLongitudeBand(lat);return nycBaseProject(band.west+(band.east-band.west)*fraction,lat)};
 const CENTRAL_PARK_POLY=[parkCorner(40.7681,.30),parkCorner(40.8004,.30),parkCorner(40.7971,.70),parkCorner(40.7645,.70)];
-let manhattanRoads=[];
+let manhattanRoads=[],nycRoadSegments=[],nycRoadBuckets=new Map();
+const NYC_ROAD_CELL=150;
+const roadBucketKey=(x,y)=>x+','+y;
+function pointRoadDistance(x,y,r){const dx=r.bx-r.ax,dy=r.by-r.ay,dd=dx*dx+dy*dy||1,t=clamp(((x-r.ax)*dx+(y-r.ay)*dy)/dd,0,1),px=r.ax+dx*t,py=r.ay+dy*t;return Math.hypot(x-px,y-py)}
+function nearestManhattanRoad(x,y){
+ if(!nycRoadBuckets.size)return null;
+ const cx=Math.floor(x/NYC_ROAD_CELL),cy=Math.floor(y/NYC_ROAD_CELL),seen=new Set();let best=null;
+ for(let oy=-2;oy<=2;oy++)for(let ox=-2;ox<=2;ox++)for(const index of nycRoadBuckets.get(roadBucketKey(cx+ox,cy+oy))||[]){
+  if(seen.has(index))continue;seen.add(index);const road=nycRoadSegments[index],distance=pointRoadDistance(x,y,road);
+  if(!best||distance<best.distance)best={road,distance};
+ }
+ return best;
+}
+function* buildOfficialManhattanRoadsSteps(){
+ manhattanRoads=[];nycRoadSegments=[];nycRoadBuckets=new Map();
+ const source=window.CityfallNYCRoadData;
+ if(activeMap!=='nyc'||!source?.roads?.length)return false;
+ const scale=Number(source.scale)||1000000,detailStride=batteryMode()?12:deviceProfile.constrained?9:6;
+ let sequence=0,built=0;
+ for(const [widthFeet,packed] of source.roads){
+  const points=[];
+  for(let i=0;i<packed.length;i+=2)points.push(nycProject(packed[i]/scale,packed[i+1]/scale));
+  for(let i=1;i<points.length;i++){
+   const a=points[i-1],b=points[i],mx=(a.x+b.x)*.5,my=(a.y+b.y)*.5;
+   if(!withinManhattan(mx,my))continue;
+   const length=Math.hypot(b.x-a.x,b.y-a.y);if(length<2)continue;
+   const width=clamp((Number(widthFeet)||36)*.3048,5.2,32),road={ax:a.x,ay:a.y,bx:b.x,by:b.y,width,angle:Math.atan2(b.y-a.y,b.x-a.x)};
+   const index=nycRoadSegments.push(road)-1,margin=width*.5+54,minX=Math.floor((Math.min(a.x,b.x)-margin)/NYC_ROAD_CELL),maxX=Math.floor((Math.max(a.x,b.x)+margin)/NYC_ROAD_CELL),minY=Math.floor((Math.min(a.y,b.y)-margin)/NYC_ROAD_CELL),maxY=Math.floor((Math.max(a.y,b.y)+margin)/NYC_ROAD_CELL);
+   for(let gy=minY;gy<=maxY;gy++)for(let gx=minX;gx<=maxX;gx++){const key=roadBucketKey(gx,gy),bucket=nycRoadBuckets.get(key);if(bucket)bucket.push(index);else nycRoadBuckets.set(key,[index])}
+   // The static map carries every centerline.  The 3D road mesh keeps all wide
+   // routes plus a stable sample of local streets so older phones stay smooth.
+   if(width>=14||sequence++%detailStride===0)manhattanRoads.push({x:mx,y:my,w:length,h:width,angle:road.angle});
+   if(++built%360===0)yield 1;
+  }
+ }
+ return nycRoadSegments.length>0;
+}
+function vectorBuildingClear(cx,cy,w,h,angle){
+ const co=Math.cos(angle),si=Math.sin(angle),samples=[[0,0],[-w*.5,-h*.5],[w*.5,-h*.5],[w*.5,h*.5],[-w*.5,h*.5]];
+ for(const [lx,ly] of samples){const x=cx+lx*co-ly*si,y=cy+lx*si+ly*co,nearest=nearestManhattanRoad(x,y);
+  if(!withinManhattan(x,y)||manhattanPark(x,y)||(nearest&&nearest.distance<nearest.road.width*.5+5))return false;
+ }
+ return true;
+}
+function* buildVectorManhattanBuildings(seed){
+ const box=nycBoroughBox('Manhattan'),sc=nycScale(),step=58,occupied=new Map(),cell=76;
+ const collides=(cx,cy,r)=>{const gx=Math.floor(cx/cell),gy=Math.floor(cy/cell);for(let y=gy-1;y<=gy+1;y++)for(let x=gx-1;x<=gx+1;x++)for(const other of occupied.get(roadBucketKey(x,y))||[])if(Math.hypot(cx-other.x,cy-other.y)<r+other.r)return true;return false};
+ const occupy=(cx,cy,r)=>{const key=roadBucketKey(Math.floor(cx/cell),Math.floor(cy/cell)),bucket=occupied.get(key);if(bucket)bucket.push({x:cx,y:cy,r});else occupied.set(key,[{x:cx,y:cy,r}])};
+ let row=0;
+ for(let y=box.top*sc+step*.5;y<box.bottom*sc-step*.5;y+=step,row++){
+  for(let x=box.left*sc+step*.5,col=0;x<box.right*sc-step*.5;x+=step,col++){
+   if(col%80===0)yield 1;
+   const rand=rng((seed+Math.imul(row+1,104729)+Math.imul(col+1,130363))>>>0),cx=x+(rand()-.5)*15,cy=y+(rand()-.5)*15,nearest=nearestManhattanRoad(cx,cy);
+   if(!nearest||nearest.distance<nearest.road.width*.5+15||!withinManhattan(cx,cy)||manhattanPark(cx,cy))continue;
+   let w=18+rand()*18,h=17+rand()*22,angle=nearest.road.angle;
+   if(rand()<.19){w*=1.42;h*=1.12}
+   if(rand()<.10)angle+=((rand()-.5)*.24);
+   const radius=Math.hypot(w,h)*.47;
+   if(collides(cx,cy,radius)||!vectorBuildingClear(cx,cy,w,h,angle))continue;
+   const bw=Math.abs(w*Math.cos(angle))+Math.abs(h*Math.sin(angle)),bh=Math.abs(w*Math.sin(angle))+Math.abs(h*Math.cos(angle));
+   const district=nycPreviewBoroughAt(cx,cy);
+   buildings.push({key:'MHR:'+row+':'+col,x:cx-bw*.5,y:cy-bh*.5,w:bw,h:bh,cx,cy,footW:w,footH:h,angle,locked:!nycDistrictUnlocked(cx,cy,district),roof:Math.floor(rand()*7),shade:rand(),height:nycSkylineLevels(cx,cy,rand()),vent:rand()<.42,solar:rand()<.13});
+   occupy(cx,cy,radius);
+  }
+ }
+}
+function drawManhattanVectorRoads(c){
+ if(!nycRoadSegments.length)return;
+ const groups=new Map();
+ for(const road of nycRoadSegments){const width=Math.max(6,Math.round(road.width/2)*2),bucket=groups.get(width);if(bucket)bucket.push(road);else groups.set(width,[road])}
+ const stroke=(color,extra)=>{for(const [width,roads] of groups){c.strokeStyle=color;c.lineWidth=width+extra;c.beginPath();for(const road of roads){c.moveTo(road.ax,road.ay);c.lineTo(road.bx,road.by)}c.stroke()}};
+ c.save();c.lineCap='round';c.lineJoin='round';stroke('#426575',6);stroke('#6f8990',0);
+ c.strokeStyle='#afbdaf';c.lineWidth=1.15;c.setLineDash([10,17]);c.beginPath();for(const road of nycRoadSegments)if(road.width>=18){c.moveTo(road.ax,road.ay);c.lineTo(road.bx,road.by)}c.stroke();c.setLineDash([]);c.restore();
+}
 function manhattanBasis(){
  const south=nycProject(-74.010,40.704),north=nycProject(-73.927,40.875),len=Math.hypot(north.x-south.x,north.y-south.y);
  const u={x:(north.x-south.x)/len,y:(north.y-south.y)/len};return{south,len,u,v:{x:-u.y,y:u.x}};
@@ -198,6 +274,8 @@ function mhPoint(b,s,t){return{x:b.south.x+b.u.x*s+b.v.x*t,y:b.south.y+b.u.y*s+b
 function manhattanPark(x,y){return insidePoly(x/nycScale(),y/nycScale(),CENTRAL_PARK_POLY)}
 function manhattanRoadDistance(x,y){
  if(activeMap!=='nyc'||!withinManhattan(x,y))return Infinity;
+ const vectorRoad=nearestManhattanRoad(x,y);
+ if(vectorRoad)return Math.max(0,vectorRoad.distance-vectorRoad.road.width*.5);
  const b=manhattanBasis(),dx=x-b.south.x,dy=y-b.south.y;
  const along=dx*b.u.x+dy*b.u.y,across=dx*b.v.x+dy*b.v.y;
  const street=Math.abs(along-(-500+Math.round((along+500)/MANHATTAN_STREET)*MANHATTAN_STREET));
@@ -213,6 +291,7 @@ function manhattanBuildingContains(b,x,y,pad=0){
 }
 function* buildManhattanBlocksSteps(seed){
  if(activeMap!=='nyc')return;
+ if(yield* buildOfficialManhattanRoadsSteps()){yield* buildVectorManhattanBuildings(seed);return}
  const b=manhattanBasis(),u=b.u,v=b.v,angle=Math.atan2(v.y,v.x),co=Math.cos(angle),si=Math.sin(angle);
  const startS=-500,endS=b.len+1000,limitT=3600;
  // Run-length compressed street surfaces prevent millions of extra 3D road objects.
@@ -428,6 +507,8 @@ function iconSVG(id){return '<svg viewBox="0 0 32 32" fill="none" stroke="curren
 function closeDrawers(){$('sidebar').classList.remove('open');document.querySelector('.inspector').classList.remove('open');const sheet=$('mobileMoreSheet');if(sheet){sheet.classList.remove('open');sheet.setAttribute('aria-hidden','true')}$('mobileBackdrop').classList.remove('show')}
 function drawer(name){const el=name==='tools'?$('sidebar'):document.querySelector('.inspector');const already=el.classList.contains('open');closeDrawers();if(!already){el.classList.add('open');$('mobileBackdrop').classList.add('show')}}
 function toggleMobileQuickControls(){const sheet=$('mobileMoreSheet'),opening=!sheet.classList.contains('open');closeDrawers();if(opening){sheet.classList.add('open');sheet.setAttribute('aria-hidden','false');$('mobileBackdrop').classList.add('show')}}
+function setIntelPage(page){const unit=page==='unit';$('intelSituationPane').classList.toggle('active',!unit);$('intelUnitPane').classList.toggle('active',unit);document.querySelectorAll('[data-intel-page]').forEach(button=>{const active=button.dataset.intelPage===page;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active))})}
+function openMobileUnitInspector(){if(window.innerWidth<=900&&selected){setIntelPage('unit');drawer('intel')}}
 
 function rng(seed){let s=seed>>>0;return ()=>{s=(s+0x6D2B79F5)>>>0;let t=s;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296}};
 function audioReady(){if(!soundEnabled)return null;try{if(!audio)audio=new(window.AudioContext||window.webkitAudioContext)();if(audio.state==='suspended')audio.resume();return audio}catch{return null}}
@@ -566,15 +647,13 @@ function* makeCitySteps(){const config=MAPS[activeMap],rand=rng(config.seed);bui
   c.beginPath();const cp=CENTRAL_PARK_POLY;c.moveTo(cp[0].x*sc,cp[0].y*sc);for(let i=1;i<cp.length;i++)c.lineTo(cp[i].x*sc,cp[i].y*sc);c.closePath();c.fillStyle='#7b9f83';c.fill();c.restore()}
  for(const p of parks){c.fillStyle='#91b19e';c.fillRect(p.x-8,p.y-8,p.w+16,p.h+16);c.strokeStyle='#c6c8b4';c.lineWidth=4;c.strokeRect(p.x-5,p.y-5,p.w+10,p.h+10);c.fillStyle='#b8c8ac';c.fillRect(p.x+p.w*.42,p.y,7,p.h);c.fillRect(p.x,p.y+p.h*.47,p.w,7);for(const t of p.trees){c.fillStyle='#6e9481';c.beginPath();c.arc(t.x+1,t.y+1,t.r+1,0,TAU);c.fill();c.fillStyle='#a3c2a2';c.beginPath();c.arc(t.x-1,t.y-2,t.r*.7,0,TAU);c.fill()}}
  for(const l of lots){c.fillStyle='#aaaead';c.fillRect(l.x-6,l.y-6,l.w+12,l.h+12);c.strokeStyle='#e4e0d0';c.lineWidth=1.5;if(!l.angle){for(let px=l.x+9;px<l.x+l.w;px+=18){c.beginPath();c.moveTo(px,l.y+6);c.lineTo(px,l.y+l.h-6);c.stroke()}}else{for(let py=l.y+9;py<l.y+l.h;py+=18){c.beginPath();c.moveTo(l.x+6,py);c.lineTo(l.x+l.w-6,py);c.stroke()}}}
- // Street surfaces: hide the older square network under the finer Manhattan grid.
- if(activeMap==='nyc'){c.save();c.beginPath();c.rect(0,0,W,H);const coast=NYC_BOROUGHS.find(b=>b.name==='Manhattan').poly;const sc=nycScale();
- c.moveTo(coast[0].x*sc,coast[0].y*sc);for(let i=1;i<coast.length;i++)c.lineTo(coast[i].x*sc,coast[i].y*sc);c.closePath();c.clip('evenodd');}
- // street shoulders and surface
- for(const x of VIS_XROADS){const roadWide=activeMap==='nyc'?18:25*nycScale(),roadCore=activeMap==='nyc'?14:19*nycScale();c.fillStyle='#8f9b9a';c.fillRect(x-roadWide,0,2*roadWide,VIS_H);c.fillStyle='#a3aeaa';c.fillRect(x-roadCore,0,2*roadCore,VIS_H)}
- for(const y of VIS_YROADS){const roadWide=activeMap==='nyc'?18:25*nycScale(),roadCore=activeMap==='nyc'?14:19*nycScale();c.fillStyle='#8f9b9a';c.fillRect(0,y-roadWide,VIS_W,2*roadWide);c.fillStyle='#a3aeaa';c.fillRect(0,y-roadCore,VIS_W,2*roadCore)}
- c.strokeStyle='#cad0c0';c.lineWidth=1;c.setLineDash([9,17]);for(const x of VIS_XROADS){c.beginPath();c.moveTo(x,0);c.lineTo(x,VIS_H);c.stroke()}for(const y of VIS_YROADS){c.beginPath();c.moveTo(0,y);c.lineTo(VIS_W,y);c.stroke()}c.setLineDash([]);
- for(const x of VIS_XROADS)for(const y of VIS_YROADS){c.fillStyle='#9eaaa5';c.fillRect(x-21,y-21,42,42);c.fillStyle='#e1e4d6';for(let k=-16;k<=15;k+=7){c.fillRect(x+k,y-24,3,7);c.fillRect(x+k,y+17,3,7);c.fillRect(x-24,y+k,7,3);c.fillRect(x+17,y+k,7,3)}}
- if(activeMap==='nyc'){c.restore();for(const r of manhattanRoads){c.save();c.translate(r.x,r.y);c.rotate(r.angle);c.fillStyle='#839291';c.fillRect(-r.w*.5,-r.h*.5,r.w,r.h);c.fillStyle='#a1adaa';c.fillRect(-r.w*.5,-r.h*.33,r.w,r.h*.66);c.restore()}}
+ // Manhattan uses bundled official centerlines instead of the old square grid.
+ if(activeMap==='nyc')drawManhattanVectorRoads(c);else{
+  for(const x of VIS_XROADS){const roadWide=25*nycScale(),roadCore=19*nycScale();c.fillStyle='#8f9b9a';c.fillRect(x-roadWide,0,2*roadWide,VIS_H);c.fillStyle='#a3aeaa';c.fillRect(x-roadCore,0,2*roadCore,VIS_H)}
+  for(const y of VIS_YROADS){const roadWide=25*nycScale(),roadCore=19*nycScale();c.fillStyle='#8f9b9a';c.fillRect(0,y-roadWide,VIS_W,2*roadWide);c.fillStyle='#a3aeaa';c.fillRect(0,y-roadCore,VIS_W,2*roadCore)}
+  c.strokeStyle='#cad0c0';c.lineWidth=1;c.setLineDash([9,17]);for(const x of VIS_XROADS){c.beginPath();c.moveTo(x,0);c.lineTo(x,VIS_H);c.stroke()}for(const y of VIS_YROADS){c.beginPath();c.moveTo(0,y);c.lineTo(W,y);c.stroke()}c.setLineDash([]);
+  for(const x of VIS_XROADS)for(const y of VIS_YROADS){c.fillStyle='#9eaaa5';c.fillRect(x-21,y-21,42,42);c.fillStyle='#e1e4d6';for(let k=-16;k<=15;k+=7){c.fillRect(x+k,y-24,3,7);c.fillRect(x+k,y+17,3,7);c.fillRect(x-24,y+k,7,3);c.fillRect(x+17,y+k,7,3)}}
+ }
  const roofs=['#bac2bd','#c7c7bb','#aeb8b5','#ddd8c8','#9caeac','#b3b6b2','#c5cec6'];
  for(const b of buildings){if(b.footW){c.save();c.translate(b.cx,b.cy);c.rotate(b.angle);c.fillStyle='#6c7976';c.fillRect(-b.footW/2+3,-b.footH/2+3,b.footW,b.footH);c.fillStyle=roofs[b.roof];c.fillRect(-b.footW/2,-b.footH/2,b.footW,b.footH);c.strokeStyle='#879c9b';c.lineWidth=1.4;c.strokeRect(-b.footW/2,-b.footH/2,b.footW,b.footH);c.restore();continue}c.fillStyle='#6c7976';c.fillRect(b.x+4,b.y+5,b.w,b.h);c.fillStyle=roofs[b.roof];c.fillRect(b.x,b.y,b.w,b.h);c.strokeStyle='#8a9c9a';c.lineWidth=1.6;c.strokeRect(b.x+.7,b.y+.7,b.w-1.4,b.h-1.4);c.fillStyle='#e4e5d6';c.fillRect(b.x+4,b.y+4,b.w-8,2);c.fillStyle='#829b98';if(b.vent){c.fillRect(b.x+b.w*.24,b.y+b.h*.25,10,7);c.strokeRect(b.x+b.w*.24,b.y+b.h*.25,10,7)}if(b.solar&&b.w>34){c.fillStyle='#667e85';c.fillRect(b.x+b.w*.52,b.y+b.h*.25,Math.max(10,b.w*.24),12);c.strokeStyle='#a5c2c1';c.strokeRect(b.x+b.w*.52,b.y+b.h*.25,Math.max(10,b.w*.24),12)}if(b.w>40&&b.h>27){c.fillStyle='#9daaa4';c.fillRect(b.x+7,b.y+b.h-10,Math.min(13,b.w/5),3)}}
  if(isNYC()){
@@ -1016,6 +1095,7 @@ async function reset(scenario=scenarioIndex,opts={}){if(loadingBusy)return;loadi
 function buildToolUi(){const entry=t=>'<button class="tool" data-tool="'+t.id+'" title="'+t.name+' ['+t.key+']"><span class="tool-icon">'+iconSVG(t.id)+'</span><span class="tool-text"><span class="tool-title">'+t.name+'</span><br><span class="tool-description">'+t.desc+'</span></span><span class="tool-price">$'+fmt(t.price)+'</span><span class="shortcut">'+t.key+'</span></button>';$('toolList').innerHTML=tools.map(entry).join('');$('supportList').innerHTML=supports.map(entry).join('');for(const b of document.querySelectorAll('[data-tool]'))b.addEventListener('click',()=>{effectSound('ui');chooseTool(b.dataset.tool)})}
 function updateToolUi(){for(const b of document.querySelectorAll('[data-tool]')){const t=unitSpec(b.dataset.tool),cooldown=Math.max(0,(spawnCooldowns[t.id]||0)-time),restricted=tools.includes(t)&&!defenseCanBuild(t.id),respondOnly=supports.includes(t)&&phase!=='live';b.classList.toggle('selected',toolId===t.id);b.classList.toggle('no-money',budget<t.price||cooldown>0||restricted||respondOnly);b.disabled=cooldown>0||restricted||respondOnly;b.querySelector('.tool-price').textContent=restricted?'LOCKED':respondOnly?'LIVE ONLY':cooldown>0?Math.ceil(cooldown)+'s':'$'+fmt(t.price)}}
 function chooseTool(id){if(phase==='won'||phase==='lost')return;const t=unitSpec(id);if(!t||tools.includes(t)&&!defenseCanBuild(id)||supports.includes(t)&&phase!=='live'){notify('This deployment is unavailable during the current phase.',true);return}
+ if(mobileOrbitMode)setMobileOrbitMode(false);
  toolId=toolId===id?null:id;pendingZone=[];updatePolyControls();selected=null;uiInspectedId=-1;updateToolUi();$('mobilePanBtn').classList.toggle('active',!toolId);
  if(toolId){$('mapTip').innerHTML=id==='zone'?'Tap to add shelter <b>vertices</b>. Tap the first corner again or choose FINISH. Corners snap to adjacent shelters. Gates attach to any road-facing edge.':id==='wall'?'Drag an <b>unlimited-length barricade</b>. Cost scales with its length.':id==='gate'?'Tap a safe-zone wall <b>adjacent to a road</b> to add a gate. Select it later to reinforce its HP.':id==='strafe'?'Drag to aim a <b>line airstrike</b> (up to 1,100 map units).':supports.includes(t)?'Tap a location to request <b>'+t.name+'</b>. Arrival takes time.':'Tap to deploy <b>'+t.name+'</b>. Garrisons recruit mobile soldiers after the outbreak; other units engage infected.';if(window.innerWidth<=900)closeDrawers()}
  else $('mapTip').innerHTML='Click a unit to <b>inspect and upgrade</b> it. Pan using WASD or right-drag.';renderUI(true)}
@@ -1215,7 +1295,7 @@ function begin(){if(phase!=='planning')return;audioReady();if(zones.length===0){
  const ix=Math.floor(rnd(1,XROADS.length-1)),iy=Math.floor(rnd(1,YROADS.length-1));outbreak={x:XROADS[ix]+rnd(-12,12),y:YROADS[iy]+rnd(-12,12)};if(!safeWavePoint(outbreak.x,outbreak.y,25))outbreak=safeWaveOrigin();if(!outbreak){notify('No safe outdoor outbreak location is available. Make room outside the shelters.',true);return;}
  campaignCheckpoint=snapshot();saveCampaign();phase='live';time=0;surgeStartedAt=time;hadActiveSurge=true;spawnCluster(scenarioAt().seedCount);rebuildGrid(zombieGrid,zombies);$('phaseLabel').textContent='OUTBREAK ACTIVE — CONTAINMENT IN PROGRESS';$('phaseDot').style.background='#e68d88';$('phaseDot').style.boxShadow='0 0 8px #e68d8855';$('startBtn').style.display='none';$('pauseBtn').style.display='';$('mapTip').innerHTML='<b>OUTBREAK ACTIVE.</b> Garrison, Lookout, Patrol Helicopter and Tank remain under Defense. Tanks arrive by plane mid-round; emergency soldiers leave after the level.';toolId=null;updateToolUi();$('mapTip').classList.add('warn');log('WARNING: Unpredictable infection origin confirmed.');notify('Outbreak detected! Defend your shelters.');effectSound('warning');updateButtons()}
 function togglePause(){if(phase==='live'){prevPhase='live';phase='paused'}else if(phase==='paused')phase='live';updateButtons();renderUI(true)}
-function updateButtons(){$('pauseBtn').textContent=phase==='paused'?'▶ RESUME':'Ⅱ PAUSE';document.querySelectorAll('[data-speed]').forEach(b=>b.classList.toggle('active',+b.dataset.speed===speed));$('clearBtn').disabled=phase!=='planning';$('startBtn').disabled=phase!=='planning';$('endlessLaunchBtn').style.display=phase==='won'&&scenarioIndex===campaignStages()-1&&!endlessMode?'':'none';$('mobilePanBtn').classList.toggle('active',!toolId)}
+function updateButtons(){$('pauseBtn').textContent=phase==='paused'?'▶ RESUME':'Ⅱ PAUSE';document.querySelectorAll('[data-speed]').forEach(b=>b.classList.toggle('active',+b.dataset.speed===speed));$('clearBtn').disabled=phase!=='planning';$('startBtn').disabled=phase!=='planning';$('endlessLaunchBtn').style.display=phase==='won'&&scenarioIndex===campaignStages()-1&&!endlessMode?'':'none';$('mobilePanBtn').classList.toggle('active',!toolId&&!mobileOrbitMode)}
 function closestZombie(x,y,range){let best=null,bd=range*range;eachNearby(zombieGrid,x,y,range,z=>{if(!z.alive)return;let d=(z.x-x)**2+(z.y-y)**2;if(d<bd){bd=d;best=z}});return best}
 function closestCivilian(x,y,range,includeSheltered=false){let best=null,bd=range*range;eachNearby(civGrid,x,y,range,p=>{if(!p.alive||(!includeSheltered&&p.sheltered))return;let d=(p.x-x)**2+(p.y-y)**2;if(d<bd){bd=d;best=p}});return best}
 function targetPoint(p,t,key=null){p.route=[{x:t.x,y:t.y}];p.routeAt=0;p.target=t;p.navKey=key}
@@ -2445,11 +2525,12 @@ function upgradeSelected(){
 function refundSelected(){if(!selected)return;const u=selected;budget+=Math.floor(u.price*.7);if(u.type==='zone'){zones=zones.filter(x=>x!==u);gates=gates.filter(g=>g.zoneId!==u.id)}else if(u.type==='gate')gates=gates.filter(x=>x!==u);else if(u.type==='wall'){walls=walls.filter(x=>x!==u);wallGridDirty=true;}else defenses=defenses.filter(x=>x!==u&&(u.type!=='garrison'||x.garrisonId!==u.id));selected=null;log('Deployment dismantled; partial funds recovered.');beaconGridDirty=true;renderUI(true);saveCampaign();playTone(330,.06,.018)}
 function findSelected(p){const find=defenses.find(d=>Math.hypot(d.x-p.x,d.y-p.y)<23),gate=gates.find(g=>Math.hypot(g.x-p.x,g.y-p.y)<20),wall=walls.find(w=>w.hp>0&&distanceToLine(p.x,p.y,w.ax,w.ay,w.bx,w.by)<12),bridge=bridges.find(b=>hitRectPoint(p.x,p.y,b)),zone=zones.find(z=>isInZone(p.x,p.y,z));return find||gate||wall||bridge||zone||null}
 function mapPointer(e){const r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;return{x,y}}
-const touchPoints=new Map();let touchGesture=null,pinch=null;
+const touchPoints=new Map();let touchGesture=null,pinch=null,mobileOrbitMode=false;
+function setMobileOrbitMode(enabled){mobileOrbitMode=!!enabled;const button=$('mobileOrbitBtn');button.classList.toggle('orbit-active',mobileOrbitMode);button.querySelector('span').textContent=mobileOrbitMode?'ORBIT ON':'ORBIT MODE';button.setAttribute('aria-pressed',String(mobileOrbitMode));$('mobilePanBtn').classList.toggle('active',!toolId&&!mobileOrbitMode);if(mobileOrbitMode){toolId=null;selected=null;drag=null;pendingZone=[];updatePolyControls();updateToolUi();notify('Orbit mode on: drag the map to rotate and tilt. Tap Orbit again to return to map controls.')}else notify('Map controls restored.');}
 const aimsWithDrag=id=>!!unitSpec(id)?.arc&&unitSpec(id).arc<TAU-.001;
-function handlePlacement(x,y,screenPoint=null){if(!toolId&&screenPoint){const roofUnit=projectedUnitPick(screenPoint.x,screenPoint.y);if(roofUnit){selected=roofUnit;renderUI(true);return}}
+function handlePlacement(x,y,screenPoint=null){if(!toolId&&screenPoint){const roofUnit=projectedUnitPick(screenPoint.x,screenPoint.y);if(roofUnit){selected=roofUnit;renderUI(true);openMobileUnitInspector();return}}
  if(screenPoint&&['garrison','sniper','turret','mortar','beacon','machinegun'].includes(toolId)){const roof=rooftopPick(screenPoint.x,screenPoint.y);if(roof){x=roof.x;y=roof.y}}
- if(toolId==='zone')addPolyVertex(x,y);else if(toolId==='strafe')notify('Drag from the start to the end of the line airstrike.',true);else if(supports.some(s=>s.id===toolId))sendSupport(toolId,x,y);else if(toolId==='gate')addGate(x,y);else if(toolId)addDefense(toolId,x,y);else{selected=findSelected({x,y});renderUI(true)}}
+ if(toolId==='zone')addPolyVertex(x,y);else if(toolId==='strafe')notify('Drag from the start to the end of the line airstrike.',true);else if(supports.some(s=>s.id===toolId))sendSupport(toolId,x,y);else if(toolId==='gate')addGate(x,y);else if(toolId)addDefense(toolId,x,y);else{selected=findSelected({x,y});renderUI(true);openMobileUnitInspector()}}
 function commitAimedDefense(d){let x=d.start.x,y=d.start.y;if(['garrison','sniper','turret','mortar','beacon','machinegun'].includes(d.id)&&d.screenStart){const roof=rooftopPick(d.screenStart.x,d.screenStart.y);if(roof){x=roof.x;y=roof.y}}
  const rotation=Math.hypot(d.cur.x-d.start.x,d.cur.y-d.start.y)>7?Math.atan2(d.cur.y-y,d.cur.x-x):0;addDefense(d.id,x,y,false,rotation)}
 function panStart(e,m){mouse.pan=true;mouse.px=m.x;mouse.py=m.y;canvas.classList.add('panning');canvas.setPointerCapture?.(e.pointerId)}
@@ -2459,7 +2540,8 @@ canvas.addEventListener('pointerdown',e=>{if(!$('introOverlay').classList.contai
    touchPoints.set(e.pointerId,m);
    if(touchPoints.size===2){const [a,b]=Array.from(touchPoints.values());const mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};pinch={startDist:Math.max(15,Math.hypot(a.x-b.x,a.y-b.y)),zoom:cam.zoom,world:screenToWorld(mid.x,mid.y)};touchGesture=null;drag=null;mouse.pan=false;return}
    if(touchPoints.size>2)return;
-   touchGesture={id:e.pointerId,x:m.x,y:m.y,lastX:m.x,lastY:m.y,world:w,moved:false,tool:toolId};
+   touchGesture={id:e.pointerId,x:m.x,y:m.y,lastX:m.x,lastY:m.y,world:w,moved:false,tool:toolId,orbit:mobileOrbitMode};
+   if(mobileOrbitMode)return;
    if(['wall','strafe'].includes(toolId))drag={type:toolId,start:w,cur:w};else if(aimsWithDrag(toolId))drag={type:'aim',id:toolId,start:w,cur:w,screenStart:m};return;
  }
  if(e.button===2){orbitStart(e,m);return}if(e.button===1||e.shiftKey){panStart(e,m);return}if(e.button!==0)return;
@@ -2470,7 +2552,8 @@ canvas.addEventListener('pointermove',e=>{const m=mapPointer(e);mouse.x=m.x;mous
    touchPoints.set(e.pointerId,m);
    if(pinch&&touchPoints.size>=2){const [a,b]=Array.from(touchPoints.values());const mx=(a.x+b.x)/2,my=(a.y+b.y)/2,d=Math.max(15,Math.hypot(a.x-b.x,a.y-b.y));markZoomMoving();cam.zoom=clamp(pinch.zoom*d/pinch.startDist,NYC_MIN_ZOOM,2.3);const q=screenToWorld(mx,my);cam.x+=pinch.world.x-q.x;cam.y+=pinch.world.y-q.y;clampCamera();return}
    if(touchGesture&&touchGesture.id===e.pointerId){let g=touchGesture,dx=m.x-g.lastX,dy=m.y-g.lastY;g.moved=g.moved||Math.hypot(m.x-g.x,m.y-g.y)>9;
-    if(!toolId||!['zone','wall','strafe'].includes(toolId)&&!aimsWithDrag(toolId)){if(g.moved){shiftCameraScreen(dx,dy)}}
+    if(g.orbit&&g.moved){const turnX=clamp(dx,-42,42)*.012;camera3D.yaw+=settings.invertOrbitX?-turnX:turnX;camera3D.tilt=clamp(camera3D.tilt+clamp(dy,-42,42)*.008,.58,1.54);markZoomMoving()}
+    else if(!toolId||!['zone','wall','strafe'].includes(toolId)&&!aimsWithDrag(toolId)){if(g.moved){shiftCameraScreen(dx,dy)}}
     else if(drag)drag.cur=w;
     g.lastX=m.x;g.lastY=m.y;return}
  }
@@ -2484,7 +2567,7 @@ canvas.addEventListener('pointerup',e=>{
   if(pinch){if(touchPoints.size<2){pinch=null;touchGesture=null;drag=null}return}
   if(touchGesture&&touchGesture.id===e.pointerId){const g=touchGesture;touchGesture=null;
   if(drag){const d=drag;drag=null;if(d.type==='aim')commitAimedDefense(d);else if(g.moved&&Math.hypot(d.cur.x-d.start.x,d.cur.y-d.start.y)>23){if(d.type==='zone')addZone(rectFrom(d.start,d.cur));else if(d.type==='wall')addWall(d.start,d.cur);else commitStrafe(d)}else notify(d.type==='strafe'?'Drag to aim the line airstrike.':'Drag on the map to size '+(d.type==='zone'?'a shelter.':'a barricade.'));}
-   else if(!g.moved)handlePlacement(g.world.x,g.world.y,{x:g.x,y:g.y})
+   else if(!g.moved&&!g.orbit)handlePlacement(g.world.x,g.world.y,{x:g.x,y:g.y})
   }mouse.down=false;return
  }
  if(mouse.orbit){mouse.orbit=false;mouse.down=false;canvas.classList.remove('panning');return}
@@ -2553,7 +2636,7 @@ async function restoreFull(d){$('reviewControls').classList.add('hidden');if(!d|
  if(savedPhase==='won'||savedPhase==='lost'){phase='live';finish(savedPhase==='won');$('pauseBtn').style.display='none'}
  updateButtons();updateToolUi();renderUI(true);minimap();if(feed.length)$('radioFeed').innerHTML=feed.map(x=>'<div class="feeditem"><span class="feedtime">'+x.time+'</span> '+x.text+'</div>').join('');
 }
-function renderMapOptions(){const wrap=$('mapOptions');wrap.replaceChildren();for(const [id,m] of Object.entries(MAPS)){if(id.startsWith('nyc_'))continue;const b=document.createElement('button');b.type='button';b.className='map-choice'+(id===chosenMap?' active':'');const strong=document.createElement('strong'),small=document.createElement('small');strong.textContent=m.name;small.textContent=m.desc;b.append(strong,small);b.onclick=()=>{chosenMap=id;renderMapOptions()};wrap.append(b)}$('mapDescription').textContent=chosenMap==='nyc'?'Real-scale New York: approximately 49 × 49 km. Manhattan blocks follow a rotated ~80 m street / ~230 m avenue grid. Shapes are geographic approximations, not exact parcel data.':(chosenMap==='nyc_megascale'?'Previous 22,080-unit NYC megascale, unchanged for older saves.':chosenMap==='nyc_expanded'?'Previous 1.6× five-borough layout, unchanged for older saves.':chosenMap==='nyc_standard'?'Previous five-borough world scale, preserved for existing saved operations.':chosenMap==='nyc_legacy'?'Previous compact New York district layout, retained for older saved campaigns.':'Original procedural map. Each district expands without moving existing structures.')}
+function renderMapOptions(){const wrap=$('mapOptions');wrap.replaceChildren();for(const [id,m] of Object.entries(MAPS)){if(id.startsWith('nyc_'))continue;const b=document.createElement('button');b.type='button';b.className='map-choice'+(id===chosenMap?' active':'');const strong=document.createElement('strong'),small=document.createElement('small');strong.textContent=m.name;small.textContent=m.desc;b.append(strong,small);b.onclick=()=>{chosenMap=id;renderMapOptions()};wrap.append(b)}$('mapDescription').textContent=chosenMap==='nyc'?'Real-scale New York: approximately 49 × 49 km. Manhattan roads use official NYC Street Centerline vectors, and buildings are placed inside those street-defined blocks. The five-borough shoreline remains game-authored and offline.':(chosenMap==='nyc_megascale'?'Previous 22,080-unit NYC megascale, unchanged for older saves.':chosenMap==='nyc_expanded'?'Previous 1.6× five-borough layout, unchanged for older saves.':chosenMap==='nyc_standard'?'Previous five-borough world scale, preserved for existing saved operations.':chosenMap==='nyc_legacy'?'Previous compact New York district layout, retained for older saved campaigns.':'Original procedural map. Each district expands without moving existing structures.')}
 function openMapMenu(){if(!$('introOverlay').classList.contains('hidden'))return;if(!confirm('Return to map selection? Save your current state first if you want to return to it.'))return;if(phase==='live')togglePause();chosenMap=activeMap;renderMapOptions();$('modalOverlay').classList.add('hidden');$('introOverlay').classList.remove('hidden');$('continueBtn').style.display=readSave()?'':'none';$('continueEndlessBtn').style.display=readEndlessCheckpoint()?'':'none';closeDrawers()}
 function openSlots(mode){slotMode=mode;slotReturnPhase=phase;slotBusy=false;if(phase==='live'){phase='paused';updateButtons();renderUI(true)}closeDrawers();$('slotTitle').textContent=mode==='save'?'SAVE GAME':'LOAD GAME';$('slotHint').textContent=mode==='save'?'Choose a slot to store the current city, civilians, waves, units and budget. You can also export a portable backup.':'Choose a saved operation or import a backup file. Active outbreaks load paused.';$('slotExport').style.display=mode==='save'?'':'none';$('slotImport').style.display=mode==='load'?'':'none';$('slotMessage').textContent='';$('slotsOverlay').classList.remove('hidden');renderSlots()}
 function closeSlots(resume=true){if(slotBusy)return;slotGeneration++;$('slotsOverlay').classList.add('hidden');if(resume&&slotReturnPhase==='live'&&phase==='paused')phase='live';slotReturnPhase=null;updateButtons();renderUI(true)}
@@ -2582,10 +2665,12 @@ $('centerBtn').onclick=()=>{if(outbreak)centerCamera(outbreak.x,outbreak.y);else
   const fitX=cw/(wx*co+hy*si),fitY=ch*Math.sin(camera3D.tilt)/(wx*si+hy*co);
   cam.zoom=clamp(Math.min(fitX,fitY),NYC_MIN_ZOOM,.8);centerCamera((left+right)/2,(top+bottom)/2);notify(activeMap==='nyc'?'FULL NYC · gray boroughs unlock later':'NYC DISTRICT VIEW · pinch to zoom')};
 $('sideOverviewBtn').onclick=()=>{$('overviewBtn').click();closeDrawers()};
-$('mobileToggle').onclick=()=>drawer('tools');$('mobileToolsBtn').onclick=()=>drawer('tools');$('mobileIntelBtn').onclick=()=>drawer('intel');$('mobileMapBtn').onclick=()=>{$('overviewBtn').click();closeDrawers()};$('mobileMoreBtn').onclick=toggleMobileQuickControls;$('mobileMoreClose').onclick=closeDrawers;$('mobileSettingsBtn').onclick=()=>showSettings();$('mobileBackdrop').onclick=closeDrawers;
-$('mobilePanBtn').onclick=()=>{toolId=null;selected=null;drag=null;pendingZone=[];updatePolyControls();closeDrawers();updateToolUi();renderUI(true);notify('Pan mode: drag to move, pinch to zoom.')};
+$('mobileToggle').onclick=()=>drawer('tools');$('mobileToolsBtn').onclick=()=>drawer('tools');$('mobileIntelBtn').onclick=()=>{setIntelPage('situation');drawer('intel')};$('mobileMapBtn').onclick=()=>{$('overviewBtn').click();closeDrawers()};$('mobileMoreBtn').onclick=toggleMobileQuickControls;$('mobileMoreClose').onclick=closeDrawers;$('mobileSettingsBtn').onclick=()=>showSettings();$('mobileBackdrop').onclick=closeDrawers;
+document.querySelectorAll('[data-intel-page]').forEach(button=>button.onclick=()=>setIntelPage(button.dataset.intelPage));
+setIntelPage('situation');
+$('mobilePanBtn').onclick=()=>{if(mobileOrbitMode)setMobileOrbitMode(false);toolId=null;selected=null;drag=null;pendingZone=[];updatePolyControls();closeDrawers();updateToolUi();renderUI(true);notify('Pan mode: drag to move, pinch to zoom.')};
 $('mobileZoomIn').onclick=()=>zoomAt(-280,cw/2,ch/2);$('mobileZoomOut').onclick=()=>zoomAt(280,cw/2,ch/2);
-$('mobileSoundBtn').onclick=()=>{$('soundBtn').click()};$('orbitBtn').onclick=()=>rotate3DCamera(.34);$('mobileOrbitBtn').onclick=()=>rotate3DCamera(.34);
+$('mobileSoundBtn').onclick=()=>{$('soundBtn').click()};$('orbitBtn').onclick=()=>rotate3DCamera(.34);$('mobileOrbitBtn').onclick=()=>{const enable=!mobileOrbitMode;setMobileOrbitMode(enable);closeDrawers()};
 function toggleRanges(){showRanges=!showRanges;$('rangeBtn').textContent=showRanges?'◎ RANGES ON':'◎ RANGES OFF';$('rangeBtn').classList.toggle('active',showRanges);$('mobileRangeBtn').classList.toggle('active',showRanges);$('mobileRangeBtn').textContent=showRanges?'◎ RNG':'○ RNG';effectSound('ui')}
 $('rangeBtn').onclick=toggleRanges;$('mobileRangeBtn').onclick=toggleRanges;$('mobileRangeBtn').classList.add('active');
 $('clearBtn').onclick=()=>{effectSound('ui');if(phase!=='planning')return;for(const x of [...defenses,...zones,...walls,...gates])budget+=x.price;defenses=[];zones=[];gates=[];walls=[];wallGridDirty=true;beaconGridDirty=true;selected=null;renderUI(true);saveCampaign();notify('All planned deployments cleared.')};
