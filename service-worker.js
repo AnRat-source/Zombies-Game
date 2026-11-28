@@ -1,5 +1,5 @@
-const CACHE='cityfall-static-v3';
-const APP_SHELL=['./','./index.html','./manifest.webmanifest','./assets/style.css','./assets/game.js','./assets/polygon-mesh.js','./assets/app-install.js','./assets/wasm-sim.js','./assets/icons/cityfall-192.png','./assets/icons/cityfall-512.png','./assets/icons/cityfall-180.png','./assets/icons/cityfall.ico','./wasm/pkg/cityfall_wasm_bg.wasm'];
+const CACHE='cityfall-static-v4';
+const APP_SHELL=['./','./index.html','./manifest.webmanifest','./assets/style.css','./assets/game.js','./assets/polygon-mesh.js','./assets/app-install.js','./assets/wasm-sim.js','./assets/icons/cityfall-siege-192.png','./assets/icons/cityfall-siege-512.png','./assets/icons/cityfall-siege-180.png','./assets/icons/cityfall-siege.ico','./wasm/pkg/cityfall_wasm_bg.wasm'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(APP_SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{
