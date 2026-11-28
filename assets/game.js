@@ -425,8 +425,9 @@ const ICONS={
  paratroopers:'<path d="M3 13Q6-1 16 3Q26-1 29 13M3 13L16 21l13-8M16 21v4M12 28l4-3 4 3M13 28v3M19 28v3"/>',
  gateSupport:'<path d="M4 4h24M4 28h24"/>'};
 function iconSVG(id){return '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'+(ICONS[id]||ICONS.garrison)+'</svg>'}
-function closeDrawers(){$('sidebar').classList.remove('open');document.querySelector('.inspector').classList.remove('open');$('mobileBackdrop').classList.remove('show')}
+function closeDrawers(){$('sidebar').classList.remove('open');document.querySelector('.inspector').classList.remove('open');const sheet=$('mobileMoreSheet');if(sheet){sheet.classList.remove('open');sheet.setAttribute('aria-hidden','true')}$('mobileBackdrop').classList.remove('show')}
 function drawer(name){const el=name==='tools'?$('sidebar'):document.querySelector('.inspector');const already=el.classList.contains('open');closeDrawers();if(!already){el.classList.add('open');$('mobileBackdrop').classList.add('show')}}
+function toggleMobileQuickControls(){const sheet=$('mobileMoreSheet'),opening=!sheet.classList.contains('open');closeDrawers();if(opening){sheet.classList.add('open');sheet.setAttribute('aria-hidden','false');$('mobileBackdrop').classList.add('show')}}
 
 function rng(seed){let s=seed>>>0;return ()=>{s=(s+0x6D2B79F5)>>>0;let t=s;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296}};
 function audioReady(){if(!soundEnabled)return null;try{if(!audio)audio=new(window.AudioContext||window.webkitAudioContext)();if(audio.state==='suspended')audio.resume();return audio}catch{return null}}
@@ -2581,7 +2582,7 @@ $('centerBtn').onclick=()=>{if(outbreak)centerCamera(outbreak.x,outbreak.y);else
   const fitX=cw/(wx*co+hy*si),fitY=ch*Math.sin(camera3D.tilt)/(wx*si+hy*co);
   cam.zoom=clamp(Math.min(fitX,fitY),NYC_MIN_ZOOM,.8);centerCamera((left+right)/2,(top+bottom)/2);notify(activeMap==='nyc'?'FULL NYC · gray boroughs unlock later':'NYC DISTRICT VIEW · pinch to zoom')};
 $('sideOverviewBtn').onclick=()=>{$('overviewBtn').click();closeDrawers()};
-$('mobileToggle').onclick=()=>drawer('tools');$('mobileToolsBtn').onclick=()=>drawer('tools');$('mobileIntelBtn').onclick=()=>drawer('intel');$('mobileMapBtn').onclick=()=>{$('overviewBtn').click();closeDrawers()};$('mobileSettingsBtn').onclick=()=>showSettings();$('mobileBackdrop').onclick=closeDrawers;
+$('mobileToggle').onclick=()=>drawer('tools');$('mobileToolsBtn').onclick=()=>drawer('tools');$('mobileIntelBtn').onclick=()=>drawer('intel');$('mobileMapBtn').onclick=()=>{$('overviewBtn').click();closeDrawers()};$('mobileMoreBtn').onclick=toggleMobileQuickControls;$('mobileMoreClose').onclick=closeDrawers;$('mobileSettingsBtn').onclick=()=>showSettings();$('mobileBackdrop').onclick=closeDrawers;
 $('mobilePanBtn').onclick=()=>{toolId=null;selected=null;drag=null;pendingZone=[];updatePolyControls();closeDrawers();updateToolUi();renderUI(true);notify('Pan mode: drag to move, pinch to zoom.')};
 $('mobileZoomIn').onclick=()=>zoomAt(-280,cw/2,ch/2);$('mobileZoomOut').onclick=()=>zoomAt(280,cw/2,ch/2);
 $('mobileSoundBtn').onclick=()=>{$('soundBtn').click()};$('orbitBtn').onclick=()=>rotate3DCamera(.34);$('mobileOrbitBtn').onclick=()=>rotate3DCamera(.34);
